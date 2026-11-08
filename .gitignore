@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.cache/
+.vs/
+.vscode/*
+!.vscode/extensions.json
+*.local
+.DS_Store
+Thumbs.db

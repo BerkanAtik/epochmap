@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+
+  --color-ink: #f3ead8;
+  --color-gold: #e8c98a;
+  --color-space: #04060c;
+  --color-panel: rgb(12 17 30 / 0.72);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* Deep space with a faint nebula and a scatter of stars behind the globe. */
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgb(255 255 255 / 0.55) 50%, transparent 51%),
+    radial-gradient(1px 1px at 78% 12%, rgb(255 255 255 / 0.45) 50%, transparent 51%),
+    radial-gradient(1px 1px at 64% 82%, rgb(255 255 255 / 0.4) 50%, transparent 51%),
+    radial-gradient(1px 1px at 22% 72%, rgb(255 255 255 / 0.35) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 90% 48%, rgb(255 236 200 / 0.5) 50%, transparent 51%),
+    radial-gradient(1px 1px at 40% 8%, rgb(255 255 255 / 0.3) 50%, transparent 51%),
+    radial-gradient(1px 1px at 6% 52%, rgb(255 255 255 / 0.35) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 52% 94%, rgb(200 220 255 / 0.4) 50%, transparent 51%),
+    radial-gradient(ellipse 80% 60% at 50% 45%, #0e1b36 0%, #070b16 55%, var(--color-space) 100%);
+}
+
+/* Shared round icon button. */
+@utility icon-button {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 9999px;
+  color: rgb(243 234 216 / 0.75);
+  transition:
+    color 150ms,
+    background-color 150ms;
+  &:hover:not(:disabled) {
+    color: var(--color-ink);
+    background-color: rgb(255 255 255 / 0.08);
+  }
+  &:disabled {
+    opacity: 0.3;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+}
+
+@utility glass {
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background-color: var(--color-panel);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3);
+}
+
+@utility link {
+  text-decoration: underline;
+  text-decoration-color: rgb(243 234 216 / 0.25);
+  text-underline-offset: 4px;
+  &:hover {
+    text-decoration-color: var(--color-gold);
+  }
+}
+
+/* Timeline slider: thin track with a gold fill up to the thumb. */
+.timeline-range {
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+.timeline-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--color-gold) 0 var(--progress),
+    rgb(255 255 255 / 0.14) var(--progress) 100%
+  );
+}
+.timeline-range::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.14);
+}
+.timeline-range::-moz-range-progress {
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-gold);
+}
+.timeline-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7.5px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  border: 3px solid var(--color-gold);
+  box-shadow: 0 0 0 6px rgb(232 201 138 / 0.15);
+  transition: box-shadow 150ms;
+}
+.timeline-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  border: 3px solid var(--color-gold);
+  box-shadow: 0 0 0 6px rgb(232 201 138 / 0.15);
+}
+.timeline-range:hover::-webkit-slider-thumb,
+.timeline-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 9px rgb(232 201 138 / 0.22);
+}
+.timeline-range:focus-visible {
+  outline: none;
+}
+
+/* Native dialogs fade and rise in (and back out) using @starting-style. */
+.dialog {
+  opacity: 0;
+  translate: 0 12px;
+  transition:
+    opacity 180ms ease-out,
+    translate 180ms ease-out,
+    overlay 180ms allow-discrete,
+    display 180ms allow-discrete;
+}
+.dialog[open] {
+  opacity: 1;
+  translate: 0 0;
+  @starting-style {
+    opacity: 0;
+    translate: 0 12px;
+  }
+}
+.dialog::backdrop {
+  transition:
+    opacity 180ms,
+    overlay 180ms allow-discrete,
+    display 180ms allow-discrete;
+  opacity: 0;
+}
+.dialog[open]::backdrop {
+  opacity: 1;
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+/* MapLibre attribution, restyled for the dark theme. */
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  background: var(--color-panel);
+  color: rgb(243 234 216 / 0.7);
+  backdrop-filter: blur(12px);
+}
+.maplibregl-ctrl-attrib a {
+  color: rgb(243 234 216 / 0.85);
+}
+.maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+}
+.maplibregl-ctrl-bottom-left {
+  /* Sit above the timeline. */
+  bottom: 13rem;
+}
+@media (min-width: 640px) {
+  .maplibregl-ctrl-bottom-left {
+    bottom: 11rem;
+  }
+}
+@media (min-width: 1280px) {
+  /* Wide screens have room beside the centred timeline. */
+  .maplibregl-ctrl-bottom-left {
+    bottom: 0.75rem;
+    left: 0.75rem;
+  }
+}
+
+/* Thin, quiet scrollbars inside panels and dialogs. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog,
+  .dialog::backdrop,
+  .timeline-range::-webkit-slider-thumb {
+    transition: none;
+  }
+}
