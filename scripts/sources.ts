@@ -55,6 +55,31 @@ export const NAME_FIXES: NameFix[] = [
   { match: "Serbia-Montenegro", from: 1992, name: "Federal Republic of Yugoslavia", wikidata: "Q37024" },
   { match: "Serbia-Montenegro", from: 2003, name: "Serbia and Montenegro", wikidata: "Q37024" },
   { match: "Netherlands Antilles", from: 1, name: "Surinam", wikidata: "Q730" },
+  // Ids that point at a "History of …" article rather than the polity
+  { match: "Tibet", from: 1, name: "Tibet", wikidata: "Q521263", tr: "Tibet" },
+  {
+    match: "Qatar Protectorate",
+    from: 1,
+    name: "Qatar Protectorate",
+    wikidata: "Q944391",
+    tr: "Katar (İngiliz himayesi)",
+  },
+  {
+    match: "Libyan Arab Republic",
+    from: 1969,
+    name: "Libyan Arab Republic",
+    wikidata: "Q1016",
+    tr: "Libya Arap Cumhuriyeti",
+  },
+  {
+    match: "Libyan Arab Republic",
+    from: 1977,
+    name: "Libyan Arab Jamahiriya",
+    wikidata: "Q1016",
+    tr: "Libya Arap Cemahiriyesi",
+  },
+  { match: "Libyan Arab Republic", from: 2011, name: "Libya", wikidata: "Q1016", tr: "Libya" },
+
   // Regions that lump many colonies or dominions together: each country keeps its own name.
   { match: "British East Africa", from: 1886, name: null },
   { match: "British Colonial Empire", from: 1886, name: null },

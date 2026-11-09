@@ -845,7 +845,10 @@ async function main() {
   const neTurkish = new Map(ne.features.map((f) => [String(f.properties.NAME_EN), f.properties.NAME_TR]));
   for (const r of allRows) {
     const fromNe = neTurkish.get(r.en);
-    r.tr ??= (r.wikidata ? info.get(r.wikidata)?.tr : undefined) ?? (fromNe ? String(fromNe) : undefined);
+    // A label like "Katar tarihi" means the id points at a history article, not the polity.
+    const wikidataTr = r.wikidata ? info.get(r.wikidata)?.tr : undefined;
+    const usableTr = wikidataTr && !/\btarihi$/i.test(wikidataTr) ? wikidataTr : undefined;
+    r.tr ??= usableTr ?? (fromNe ? String(fromNe) : undefined);
   }
 
   console.log("Writing");

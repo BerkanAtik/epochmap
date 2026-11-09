@@ -9,13 +9,13 @@ Because the combined data includes CShapes 2.0, it is licensed under the
 (CC BY-NC-SA 4.0). You may share and adapt it for non-commercial purposes, with credit to
 the sources below, under the same license.
 
-| Years | Source | License |
-| --- | --- | --- |
-| 0–1885 | Cliopatria, Seshat Global History Databank. Cioni et al., *Scientific Data* 12, 247 (2025). <https://github.com/Seshat-Global-History-Databank/cliopatria> | CC BY 4.0 |
-| 1886–2013 | CShapes 2.0, International Conflict Research, ETH Zürich. Schvitz et al., *Journal of Conflict Resolution* (2022). <https://icr.ethz.ch/data/cshapes/> | CC BY-NC-SA 4.0 |
-| 1886–2013 | List of independent states, Gleditsch & Ward (1999), <http://ksgleditsch.com/data/iisystem.dat>. Used only during the build to tell states from dependencies; not redistributed. | — |
-| 2014–2026, disputed areas, land | Natural Earth 1:10m and 1:50m. <https://www.naturalearthdata.com/> | Public domain |
-| Names | Wikidata. <https://www.wikidata.org/> | CC0 |
+| Years                           | Source                                                                                                                                                                           | License         |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 0–1885                          | Cliopatria, Seshat Global History Databank. Cioni et al., _Scientific Data_ 12, 247 (2025). <https://github.com/Seshat-Global-History-Databank/cliopatria>                       | CC BY 4.0       |
+| 1886–2013                       | CShapes 2.0, International Conflict Research, ETH Zürich. Schvitz et al., _Journal of Conflict Resolution_ (2022). <https://icr.ethz.ch/data/cshapes/>                           | CC BY-NC-SA 4.0 |
+| 1886–2013                       | List of independent states, Gleditsch & Ward (1999), <http://ksgleditsch.com/data/iisystem.dat>. Used only during the build to tell states from dependencies; not redistributed. | —               |
+| 2014–2026, disputed areas, land | Natural Earth 1:10m and 1:50m. <https://www.naturalearthdata.com/>                                                                                                               | Public domain   |
+| Names                           | Wikidata. <https://www.wikidata.org/>                                                                                                                                            | CC0             |
 
 The satellite imagery (NASA Blue Marble via GIBS, public domain) and Wikipedia summaries
 (CC BY-SA) are loaded live by the app and are not stored here.
