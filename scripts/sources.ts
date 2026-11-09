@@ -55,8 +55,11 @@ export const NAME_FIXES: NameFix[] = [
   { match: "Serbia-Montenegro", from: 1992, name: "Federal Republic of Yugoslavia", wikidata: "Q37024" },
   { match: "Serbia-Montenegro", from: 2003, name: "Serbia and Montenegro", wikidata: "Q37024" },
   { match: "Netherlands Antilles", from: 1, name: "Surinam", wikidata: "Q730" },
-  // Kenya, Uganda and Tanzania were independent by 1963.
-  { match: "British East Africa", from: 1963, name: null },
+  // Regions that lump many colonies or dominions together: each country keeps its own name.
+  { match: "British East Africa", from: 1886, name: null },
+  { match: "British Colonial Empire", from: 1886, name: null },
+  // Argentina has been the Argentine Republic since 1860.
+  { match: "Argentine Confederation", from: 1861, name: "Argentine Republic", wikidata: "Q414" },
 
   // Typos and names that only fit a narrower period
   {

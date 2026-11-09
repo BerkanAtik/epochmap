@@ -297,9 +297,9 @@ function basePadding(): PaddingOptions {
   return { top: 64, bottom: window.innerWidth >= 640 ? 200 : 210, left: 0, right: 0 };
 }
 
-/** Where a flown-to place lands relative to the centre, clear of the info panel. */
+/** Where a flown-to place lands relative to the centre, clear of the info panel (side on desktop, bottom sheet on smaller screens). */
 function focusOffset(): [number, number] {
-  return window.innerWidth >= 1024 ? [-200, 0] : [0, Math.round(window.innerHeight * 0.16)];
+  return window.innerWidth >= 1024 ? [-200, 0] : [0, -Math.round(window.innerHeight * 0.2)];
 }
 
 export type Selection = { kind: "polity" | "dispute"; id: string };

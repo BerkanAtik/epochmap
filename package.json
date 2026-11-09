@@ -2,8 +2,8 @@
   "name": "epochmap",
   "private": true,
   "version": "0.1.0",
-  "description": "An interactive atlas of world history: drag through 5,000 years and watch empires rise and fall on a 3D globe.",
-  "license": "GPL-3.0-or-later",
+  "description": "An interactive atlas of world history: the political map for every year from 0 to 2026 on a 3D globe.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

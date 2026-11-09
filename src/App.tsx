@@ -304,7 +304,7 @@ export function App() {
 
       <TopBar onSearch={() => setSearchOpen(true)} onShare={share} onAbout={() => setAboutOpen(true)} />
 
-      <div className="pointer-events-none absolute inset-x-3 top-16 bottom-56 z-10 flex justify-end sm:top-20 lg:right-5 lg:left-auto lg:w-[380px]">
+      <div className="pointer-events-none absolute inset-x-3 bottom-[13.5rem] z-10 flex h-[40vh] items-end justify-end sm:bottom-56 lg:top-20 lg:right-5 lg:left-auto lg:h-auto lg:w-[380px] lg:items-start">
         <AnimatePresence>
           {selectedPolity && (
             <PolityPanel

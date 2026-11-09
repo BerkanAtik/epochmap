@@ -159,7 +159,7 @@ function WikiCard(props: { id: string; titles: Polity["wiki"]; name: string; lan
         <img
           src={summary.thumbnail}
           alt=""
-          className="h-40 w-full bg-white/5 object-cover opacity-90"
+          className="h-28 w-full bg-white/5 object-cover opacity-90 lg:h-40"
           loading="lazy"
           referrerPolicy="no-referrer"
         />

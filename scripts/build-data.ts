@@ -15,7 +15,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -441,8 +441,11 @@ async function cshapesRows(clio: ClioRow[]): Promise<Row[]> {
       };
       // Cliopatria's polity only names this country when it covers roughly the same land.
       const ratio = c ? c.area / f.properties.area : 0;
-      const sameLand = c && ratio >= 0.5 && ratio <= 2 && fix?.name !== null;
       const isIndependent = independent(f.properties.gwcode, year);
+      const ownNameWanted = fix?.name === null;
+      // Cliopatria's polity names this country only when it covers about the same land. A
+      // dependency has to match closely: "Portuguese Republic" with its colonies is not Angola.
+      const sameLand = c && !ownNameWanted && ratio >= 0.5 && ratio <= (isIndependent ? 2 : 1.3);
 
       let value = own;
       if (c && sameLand) {
@@ -453,7 +456,7 @@ async function cshapesRows(clio: ClioRow[]): Promise<Row[]> {
           group: isIndependent ? undefined : c.group,
           tr: fix?.tr,
         };
-      } else if (c && !isIndependent && ratio > 2 && fix?.name !== null) {
+      } else if (c && !isIndependent && (ratio > 1.3 || ownNameWanted)) {
         // A dependency inside a whole colonial region ("British Africa") or empire: it keeps
         // its own name and joins that empire.
         value = { ...own, group: c.group ?? (c.wikidata || c.name) };
@@ -849,6 +852,8 @@ async function main() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(join(OUT, "borders"), { recursive: true });
   await mkdir(join(OUT, "labels"), { recursive: true });
+  // The generated data carries its own license (CC BY-NC-SA, because of CShapes).
+  await copyFile(join(ROOT, "scripts", "DATA_LICENSE.md"), join(OUT, "LICENSE.md"));
 
   const spans = windows(shaped);
   const topologies: Topology[] = [];

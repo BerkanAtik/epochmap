@@ -15,7 +15,7 @@ export function TopBar({ onSearch, onShare, onAbout }: Props) {
   const lang = useLang();
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3 sm:p-5">
-      <div className="pointer-events-auto flex items-center gap-3">
+      <div className="glass pointer-events-auto flex items-center gap-3 rounded-2xl py-1.5 pr-4 pl-2">
         <Logo className="size-9 drop-shadow-[0_0_12px_rgba(232,201,138,0.35)]" />
         <div>
           <h1 className="font-display font-semibold text-ink text-xl leading-none tracking-tight">
