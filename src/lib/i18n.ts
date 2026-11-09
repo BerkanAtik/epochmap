@@ -108,6 +108,8 @@ const en = {
   webglError: "Your browser or device does not support WebGL 2, which Epochmap needs to draw the globe.",
   dataError: "The map data could not be loaded. Check your connection and reload the page.",
   reload: "Reload",
+  windowError: "This period's map could not be loaded. Check your connection and try again.",
+  crashed: "Something went wrong. Reloading the page usually fixes it.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -171,6 +173,8 @@ const tr: Record<MessageKey, string> = {
     "Tarayıcınız veya cihazınız, Epochmap'in küreyi çizmek için ihtiyaç duyduğu WebGL 2'yi desteklemiyor.",
   dataError: "Harita verisi yüklenemedi. Bağlantınızı kontrol edip sayfayı yenileyin.",
   reload: "Yenile",
+  windowError: "Bu dönemin haritası yüklenemedi. Bağlantınızı kontrol edip tekrar deneyin.",
+  crashed: "Bir şeyler ters gitti. Sayfayı yenilemek genellikle düzeltir.",
 };
 
 const messages: Record<Lang, Record<MessageKey, string>> = { en, tr };

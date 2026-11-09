@@ -112,15 +112,19 @@ export function Timeline(props: Props) {
           >
             <ChevronsRight size={20} />
           </button>
+          {/* On phones only the number shows; the narrowest ones have no room for it. */}
           <button
             type="button"
             onClick={props.onCycleSpeed}
-            className="ml-1 hidden h-9 items-center gap-1.5 rounded-full border border-white/10 px-3 text-ink/70 text-xs tabular-nums transition hover:bg-white/5 hover:text-ink sm:flex"
+            className="ml-1 hidden h-9 items-center gap-1.5 rounded-full border border-white/10 px-2.5 text-ink/70 text-xs tabular-nums transition hover:bg-white/5 hover:text-ink focus-visible:outline-2 focus-visible:outline-gold focus-visible:outline-offset-2 min-[360px]:flex sm:px-3"
             aria-label={`${t("speed")}: ${speed} ${t("yearsPerSecond")}`}
             title={t("speed")}
           >
-            <Gauge size={14} />
-            {speed} {t("yearsPerSecond")}
+            <Gauge size={14} aria-hidden />
+            {/* One text run, so the visible text reads "10 yrs/s" like the accessible name. */}
+            <span>
+              {speed} <span className="hidden sm:inline">{t("yearsPerSecond")}</span>
+            </span>
           </button>
         </div>
       </div>
@@ -178,7 +182,7 @@ export function Timeline(props: Props) {
               />
               {(!narrow || isCurrent) && (
                 <span
-                  className={`hidden whitespace-nowrap transition-colors sm:block ${isCurrent ? "text-ink/85" : "text-ink/35"}`}
+                  className={`hidden whitespace-nowrap transition-colors sm:block ${isCurrent ? "text-ink/85" : "text-ink/50"}`}
                 >
                   {t(era.key)}
                 </span>
@@ -187,7 +191,7 @@ export function Timeline(props: Props) {
           );
         })}
       </div>
-      <div aria-hidden className="relative mt-0.5 h-4 text-[10px] text-ink/40 tabular-nums short:hidden">
+      <div aria-hidden className="relative mt-0.5 h-4 text-[10px] text-ink/55 tabular-nums short:hidden">
         {TICKS.filter((y) => y >= start && y <= end).map((y) => (
           <span key={y} className="-translate-x-1/2 absolute" style={{ left: at(y) }}>
             {y}
@@ -225,7 +229,7 @@ function YearInput(props: {
         autoFocus
         inputMode="numeric"
         aria-label={label}
-        className={`${big} mt-1 h-10 w-36 rounded-lg bg-white/5 px-2 outline-none ring-1 ring-gold/60 sm:h-12 short:h-9`}
+        className={`${big} mt-1 h-10 w-[calc(4ch+1rem)] max-w-full rounded-lg bg-white/5 px-2 outline-none ring-1 ring-gold/60 sm:h-12 short:h-9`}
         value={draft}
         onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, "").slice(0, 4))}
         onBlur={commit}
@@ -241,7 +245,7 @@ function YearInput(props: {
   return (
     <button
       type="button"
-      className="group relative mt-1 block h-10 overflow-hidden rounded-lg text-left sm:h-12 short:mt-0 short:h-9"
+      className="group relative mt-1 block h-10 overflow-hidden rounded-lg text-left focus-visible:outline-2 focus-visible:outline-gold focus-visible:outline-offset-2 sm:h-12 short:mt-0 short:h-9"
       onClick={() => {
         setDraft(String(year));
         setEditing(true);

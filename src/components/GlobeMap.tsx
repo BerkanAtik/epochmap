@@ -12,15 +12,17 @@ import {
 } from "maplibre-gl";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { Disputes, Water, WindowData } from "../data/atlas";
+import { type Disputes, topojsonUrl, type WaterLabelProps, type WindowData } from "../data/atlas";
+import { PALETTE } from "../lib/colors";
 import { LABEL_FONT, LABEL_FONT_ITALIC, loadMapFonts } from "../lib/fonts";
 import { graticule } from "../lib/graticule";
 import type { Lang } from "../lib/i18n";
+import { registerTopoJsonProtocol } from "../lib/topojson";
 
 setWorkerUrl(workerUrl);
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-/** Touch screens have no hover: a name tooltip would stick after every tap. */
+/** Touch screens have no hover: hover effects would stick after every tap. */
 const canHover = matchMedia("(hover: hover)").matches;
 const FADE_MS = reducedMotion ? 0 : 500;
 
@@ -34,6 +36,7 @@ const IMAGERY =
 /** Polities at least this large (km²) get spaced small-caps labels, like on a printed atlas. */
 const LARGE_AREA = 1_500_000;
 const FILL_OPACITY = 0.46;
+const PALETTE_CSS = PALETTE.map(([r, g, b]) => `rgb(${r}, ${g}, ${b})`);
 
 const COLORS = {
   /** Shows while imagery loads (and if it can't), so the sea is never black. */
@@ -54,7 +57,11 @@ const COLORS = {
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 
-// Shapes carry their own year range; the map shows those that include the selected year.
+/**
+ * Shapes carry their own year range; the map shows those that include the "year" state. The
+ * page sets that state to the last year in which anything changed, not to the year itself, so
+ * MapLibre only re-filters when the map really changes.
+ */
 const inYear: ExpressionSpecification = [
   "all",
   ["<=", ["get", "f"], ["global-state", "year"]],
@@ -72,6 +79,11 @@ const localUpper: ExpressionSpecification = [
   ["==", ["global-state", "lang"], "tr"],
   ["get", "tru"],
   ["get", "enu"],
+];
+/** The data build picks a palette index per polity so that neighbours never share a colour. */
+const polityColor: ExpressionSpecification = [
+  "to-color",
+  ["at", ["number", ["get", "c"], 0], ["literal", PALETTE_CSS]],
 ];
 
 /**
@@ -94,7 +106,7 @@ function slotLayers(slot: Slot): { fills: LayerSpecification[]; lines: LayerSpec
         type: "fill",
         source,
         filter: inYear,
-        paint: { "fill-color": ["get", "color"], "fill-opacity": 0, "fill-antialias": true },
+        paint: { "fill-color": polityColor, "fill-opacity": 0, "fill-antialias": true },
       },
       {
         id: `pol-${slot}-hover`,
@@ -380,14 +392,18 @@ function basePadding(): PaddingOptions {
 }
 
 /**
- * Where a flown-to place lands relative to the centre, clear of the info panel: it sits on the
- * right on desktops and short screens, and at the bottom on taller phones and tablets.
+ * The visible map while the info panel is open, which sits on the right on desktops and short
+ * screens and at the bottom on taller phones and tablets: a flown-to place lands in its middle.
  */
-function focusOffset(): [number, number] {
-  if (window.innerWidth >= 1024) return [-200, 0];
-  if (isShort()) return [-Math.round(window.innerWidth * 0.2), 0];
-  return [0, -Math.round(window.innerHeight * 0.2)];
+function panelPadding(): PaddingOptions {
+  const base = basePadding();
+  if (window.innerWidth >= 1024) return { ...base, right: 420 };
+  if (isShort()) return { ...base, right: Math.round(Math.min(340, window.innerWidth * 0.5)) + 16 };
+  return { ...base, bottom: (base.bottom ?? 0) + Math.round(window.innerHeight * 0.4) };
 }
+
+const samePadding = (a: PaddingOptions, b: PaddingOptions) =>
+  a.top === b.top && a.bottom === b.bottom && a.left === b.left && a.right === b.right;
 
 export type Selection = { kind: "polity" | "dispute"; id: string };
 export type FocusRequest = { id: string; key: number };
@@ -395,19 +411,27 @@ export type FocusRequest = { id: string; key: number };
 type Props = {
   data: WindowData | null;
   disputes: Disputes | null;
-  water: Water | null;
+  waterLabels: FeatureCollection<Point, WaterLabelProps> | null;
+  /** The year on screen (for names). */
   year: number;
+  /** The last year up to `year` in which the map changed (for filtering). */
+  mapYear: number;
   lang: Lang;
   selected: Selection | null;
   focus: FocusRequest | null;
   onSelect: (selection: Selection | null) => void;
-  onError: (kind: "webgl") => void;
+  /** A window's borders are on screen (they load after its labels arrive in `data`). */
+  onWindowShown: (id: string) => void;
+  onError: (kind: "webgl" | "window") => void;
 };
 
-export function GlobeMap({ data, disputes, water, year, lang, selected, focus, onSelect, onError }: Props) {
+export function GlobeMap(props: Props) {
+  const { data, disputes, waterLabels, year, mapYear, lang, selected, focus } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const active = useRef<Slot>("b");
+  /** Years covered by the window on screen. */
+  const shown = useRef<{ from: number; to: number } | null>(null);
   const hovered = useRef<Selection | null>(null);
   const swapToken = useRef(0);
   const doneFocus = useRef<number | null>(null);
@@ -416,10 +440,12 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
   const [tooltip, setTooltip] = useState<{ name: string; x: number; y: number } | null>(null);
 
   // Map listeners are registered once; effect events let them see the latest props.
-  const select = useEffectEvent((selection: Selection | null) => onSelect(selection));
-  const fail = useEffectEvent((kind: "webgl") => onError(kind));
+  const select = useEffectEvent((selection: Selection | null) => props.onSelect(selection));
+  const fail = useEffectEvent((kind: "webgl" | "window") => props.onError(kind));
+  const windowShown = useEffectEvent((id: string) => props.onWindowShown(id));
   const currentSelection = useEffectEvent(() => selected);
-  const initialView = useEffectEvent(() => ({ year, lang }));
+  const currentMapYear = useEffectEvent(() => mapYear);
+  const initialView = useEffectEvent(() => ({ mapYear, lang }));
   /** The name to show for a hovered shape, in the UI language and for the current year. */
   const nameOf = useEffectEvent((hit: Selection): string | null => {
     if (hit.kind === "dispute") {
@@ -437,9 +463,9 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
     let map: MapLibreMap | null = null;
     let cancelled = false;
 
-    loadMapFonts().then(() => {
+    Promise.all([loadMapFonts(), registerTopoJsonProtocol()]).then(() => {
       if (cancelled || !container.current) return;
-      const { year: y, lang: l } = initialView();
+      const { mapYear: y, lang: l } = initialView();
       try {
         map = new MapLibreMap({
           container: container.current,
@@ -468,7 +494,7 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
         if (id === "hatch") m.addImage("hatch", hatchImage(), { pixelRatio: 2 });
       });
       m.setPadding(basePadding());
-      m.on("resize", () => m.setPadding(basePadding()));
+      m.on("resize", () => m.setPadding(currentSelection() ? panelPadding() : basePadding()));
 
       const setHover = (hit: Selection | null) => {
         const previous = hovered.current;
@@ -495,19 +521,25 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
         const attribution = m.getContainer().querySelector(".maplibregl-ctrl-attrib");
         attribution?.classList.remove("maplibregl-compact-show");
         attribution?.removeAttribute("open");
+        // Oceans and lakes never change: decoded once, in the map's worker.
+        m.getSource<GeoJSONSource>("ocean")?.setData(topojsonUrl("water.json", "ocean"));
+        m.getSource<GeoJSONSource>("lakes")?.setData(topojsonUrl("water.json", "lakes"));
         setReady(true);
       });
-      m.on("mousemove", (e) => {
-        const hit = hitAt(e.point);
-        setHover(hit);
-        const name = hit && nameOf(hit);
-        setTooltip(name && canHover ? { name, x: e.point.x, y: e.point.y } : null);
-      });
-      m.on("mouseout", () => {
-        setHover(null);
-        setTooltip(null);
-      });
-      m.on("movestart", () => setTooltip(null));
+      // Hover only exists with a mouse: on touch screens a tap would leave the highlight behind.
+      if (canHover) {
+        m.on("mousemove", (e) => {
+          const hit = hitAt(e.point);
+          setHover(hit);
+          const name = hit && nameOf(hit);
+          setTooltip(name ? { name, x: e.point.x, y: e.point.y } : null);
+        });
+        m.on("mouseout", () => {
+          setHover(null);
+          setTooltip(null);
+        });
+        m.on("movestart", () => setTooltip(null));
+      }
       m.on("click", (e) => select(hitAt(e.point)));
     });
 
@@ -521,9 +553,13 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
   }, []);
 
   // Year and language are global style state: changing them re-filters and relabels instantly.
+  // A year outside the window on screen waits for its window, so the map never shows a
+  // half-empty period while the next one loads.
   useEffect(() => {
-    if (ready) mapRef.current?.setGlobalStateProperty("year", year);
-  }, [year, ready]);
+    const window = shown.current;
+    if (!ready || (window && (mapYear < window.from || mapYear > window.to))) return;
+    mapRef.current?.setGlobalStateProperty("year", mapYear);
+  }, [mapYear, ready]);
   useEffect(() => {
     if (ready) mapRef.current?.setGlobalStateProperty("lang", lang);
   }, [lang, ready]);
@@ -544,14 +580,10 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
   }, [disputes, ready]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready || !water) return;
-    map.getSource<GeoJSONSource>("ocean")?.setData(water.ocean);
-    map.getSource<GeoJSONSource>("lakes")?.setData(water.lakes);
-    map.getSource<GeoJSONSource>("water-labels")?.setData(water.labels);
-  }, [water, ready]);
+    if (ready && waterLabels) mapRef.current?.getSource<GeoJSONSource>("water-labels")?.setData(waterLabels);
+  }, [waterLabels, ready]);
 
-  // Cross-fade to a new time window.
+  // Cross-fade to a new time window. Its borders are fetched and decoded in the map's worker.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !data) return;
@@ -560,39 +592,55 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
 
     map.removeFeatureState({ source: polSource(next) });
     Promise.all([
-      map.getSource<GeoJSONSource>(polSource(next))?.setData(data.borders),
+      map.getSource<GeoJSONSource>(polSource(next))?.setData(data.bordersUrl),
       map.getSource<GeoJSONSource>(labSource(next))?.setData(data.labels),
-    ]).then(() => {
-      if (token !== swapToken.current || mapRef.current !== map) return; // a newer window won
-      const previous = active.current;
-      active.current = next;
-      hovered.current = null;
-      setSlotOpacity(map, next, 1);
-      setSlotOpacity(map, previous, 0);
-      map.removeFeatureState({ source: polSource(previous) });
-      const sel = currentSelection();
-      if (sel?.kind === "polity") {
-        outlined.current = { source: polSource(next), id: sel.id };
-        map.setFeatureState(outlined.current, { selected: true });
-      }
+    ])
+      .then(() => {
+        if (token !== swapToken.current || mapRef.current !== map) return; // a newer window won
+        const previous = active.current;
+        active.current = next;
+        shown.current = data.window;
+        hovered.current = null;
+        map.setGlobalStateProperty("year", currentMapYear());
+        setSlotOpacity(map, next, 1);
+        setSlotOpacity(map, previous, 0);
+        map.removeFeatureState({ source: polSource(previous) });
+        const sel = currentSelection();
+        if (sel?.kind === "polity") {
+          outlined.current = { source: polSource(next), id: sel.id };
+          map.setFeatureState(outlined.current, { selected: true });
+        }
 
-      // Free the hidden stack once it has faded out, so it costs nothing to render.
-      setTimeout(() => {
-        if (token !== swapToken.current) return;
-        map.getSource<GeoJSONSource>(polSource(previous))?.setData(EMPTY);
-        map.getSource<GeoJSONSource>(labSource(previous))?.setData(EMPTY);
-      }, FADE_MS + 100);
-    });
+        windowShown(data.window.id);
+
+        // Free the hidden stack once it has faded out, so it costs nothing to render.
+        setTimeout(() => {
+          if (token !== swapToken.current) return;
+          map.getSource<GeoJSONSource>(polSource(previous))?.setData(EMPTY);
+          map.getSource<GeoJSONSource>(labSource(previous))?.setData(EMPTY);
+        }, FADE_MS + 100);
+      })
+      .catch((error) => {
+        // Superseded loads end up here too; only the latest one's failure matters.
+        if (token !== swapToken.current || mapRef.current !== map) return;
+        console.warn("Could not load map window:", error);
+        fail("window");
+      });
   }, [data, ready]);
 
-  // Outline the selection.
+  // Outline the selection; when it is cleared, give the map its full width back.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
     const previous = outlined.current;
     if (previous && map.getSource(previous.source)) map.setFeatureState(previous, { selected: false });
     outlined.current = null;
-    if (!selected) return;
+    if (!selected) {
+      const base = basePadding();
+      if (!samePadding(map.getPadding(), base))
+        map.easeTo({ padding: base, duration: reducedMotion ? 0 : 700 });
+      return;
+    }
     const target = {
       source: selected.kind === "dispute" ? "disputes" : polSource(active.current),
       id: selected.id,
@@ -614,7 +662,7 @@ export function GlobeMap({ data, disputes, water, year, lang, selected, focus, o
     map.flyTo({
       center: [lng, lat],
       zoom: zoomForArea(label.properties.a),
-      offset: focusOffset(),
+      padding: panelPadding(),
       duration: reducedMotion ? 0 : 1800,
       essential: true,
     });

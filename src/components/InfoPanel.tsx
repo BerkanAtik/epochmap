@@ -1,12 +1,19 @@
 import { ExternalLink, X } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { type ReactNode, Suspense, use } from "react";
+import { type ReactNode, type Ref, Suspense, use } from "react";
 import type { DisputeProps, Polity } from "../data/atlas";
 import { type Lang, useLang, useT } from "../lib/i18n";
 import { wikiSummary } from "../lib/wikipedia";
 import { formatSpans } from "../lib/years";
 
-type Common = { year: number; start: number; end: number; onClose: () => void };
+type Common = {
+  year: number;
+  start: number;
+  end: number;
+  onClose: () => void;
+  /** Lets AnimatePresence measure the panel. */
+  ref?: Ref<HTMLElement>;
+};
 
 type PolityPanelProps = Common & {
   polity: Polity;
@@ -24,11 +31,13 @@ function Panel(props: {
   eyebrow?: string;
   title: string;
   children: ReactNode;
+  ref?: Ref<HTMLElement>;
 }) {
   const t = useT();
   const reduceMotion = useReducedMotion();
   return (
     <motion.aside
+      ref={props.ref}
       aria-label={props.label}
       className="pointer-events-auto flex max-h-full w-full flex-col overflow-hidden rounded-3xl border border-white/10 bg-panel shadow-2xl shadow-black/40 backdrop-blur-xl"
       initial={reduceMotion ? false : { opacity: 0, x: 24, scale: 0.98 }}
@@ -61,7 +70,7 @@ function Panel(props: {
 const latestName = (polity: Polity, lang: Lang) => polity[lang].at(-1) ?? polity.en.at(-1) ?? polity.id;
 
 export function PolityPanel(props: PolityPanelProps) {
-  const { polity, currentName, partOf, year, start, end, onClose, onJump, onSelect } = props;
+  const { polity, currentName, partOf, year, start, end, onClose, onJump, onSelect, ref } = props;
   const t = useT();
   const lang = useLang();
   const title = currentName ?? latestName(polity, lang);
@@ -70,6 +79,7 @@ export function PolityPanel(props: PolityPanelProps) {
 
   return (
     <Panel
+      ref={ref}
       label={title}
       title={title}
       onClose={onClose}
@@ -135,12 +145,13 @@ export function PolityPanel(props: PolityPanelProps) {
 export function DisputePanel({
   dispute,
   onClose,
+  ref,
 }: Omit<Common, "year" | "start" | "end"> & { dispute: DisputeProps }) {
   const t = useT();
   const lang = useLang();
   const title = lang === "tr" ? dispute.tr : dispute.en;
   return (
-    <Panel label={title} title={title} onClose={onClose} eyebrow={t("disputed")}>
+    <Panel ref={ref} label={title} title={title} onClose={onClose} eyebrow={t("disputed")}>
       <p className="text-ink/85 text-sm leading-relaxed">
         {lang === "tr" ? dispute.note_tr : dispute.note_en}
       </p>

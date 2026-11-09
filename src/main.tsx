@@ -5,6 +5,7 @@ import "./index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getLang } from "./lib/i18n";
 
 document.documentElement.lang = getLang();
@@ -14,6 +15,8 @@ if (!root) throw new Error("#root element missing");
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

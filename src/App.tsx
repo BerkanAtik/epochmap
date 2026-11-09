@@ -1,3 +1,4 @@
+import type { FeatureCollection, Point } from "geojson";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { AboutDialog } from "./components/AboutDialog";
@@ -12,12 +13,12 @@ import {
   loadDisputes,
   loadIndex,
   loadPolities,
-  loadWater,
+  loadWaterLabels,
   loadWindow,
   type Polity,
   type PolityIndex,
   prefetchAround,
-  type Water,
+  type WaterLabelProps,
   type WindowData,
   windowFor,
 } from "./data/atlas";
@@ -42,6 +43,17 @@ function readUrl() {
   return { year: Number.isFinite(year) ? year : DEFAULT_YEAR, selection };
 }
 
+/** The page URL for a view: ?year=…&lang=…&p=… plus the map's own #zoom/lat/lng. */
+function urlFor(year: number, lang: string, selected: Selection | null): string {
+  const url = new URL(location.href);
+  url.searchParams.set("year", String(year));
+  url.searchParams.set("lang", lang);
+  url.searchParams.delete("p");
+  url.searchParams.delete("d");
+  if (selected) url.searchParams.set(selected.kind === "polity" ? "p" : "d", selected.id);
+  return url.href;
+}
+
 const initial = readUrl();
 
 export function App() {
@@ -50,9 +62,11 @@ export function App() {
   const [atlas, setAtlas] = useState<AtlasIndex | null>(null);
   const [polities, setPolities] = useState<PolityIndex | null>(null);
   const [disputes, setDisputes] = useState<Disputes | null>(null);
-  const [water, setWater] = useState<Water | null>(null);
+  const [waterLabels, setWaterLabels] = useState<FeatureCollection<Point, WaterLabelProps> | null>(null);
   const [year, setYear] = useState(initial.year);
   const [data, setData] = useState<WindowData | null>(null);
+  /** The window the map is showing; it trails `data` while the map decodes new borders. */
+  const [shownWindow, setShownWindow] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selection | null>(initial.selection);
   const [focus, setFocus] = useState<FocusRequest | null>(
     initial.selection?.kind === "polity" && !location.hash ? { id: initial.selection.id, key: 0 } : null,
@@ -67,6 +81,9 @@ export function App() {
   const start = atlas?.start ?? 0;
   const end = atlas?.end ?? 2026;
   const currentWindow = atlas ? windowFor(atlas, year) : undefined;
+  // The map only needs to re-filter in years where something changes: between them, every
+  // year shows the same shapes as the last change before it.
+  const mapYear = atlas ? (previousIn(atlas.changes, year + 1) ?? start) : year;
 
   useEffect(() => {
     loadIndex()
@@ -82,42 +99,55 @@ export function App() {
     loadDisputes()
       .then(setDisputes)
       .catch(() => {});
-    loadWater()
-      .then(setWater)
+    loadWaterLabels()
+      .then(setWaterLabels)
       .catch(() => {});
   }, []);
 
-  // A window holds many years, so data only reloads when the year leaves it.
+  // A window holds many years, so data only reloads when the year leaves it. While the slider
+  // is being dragged across several windows, only the one it settles on is loaded.
+  const settleDelay = useEffectEvent(() => (data && !playing ? 150 : 0));
   useEffect(() => {
     if (!atlas || !currentWindow) return;
     let stale = false;
-    loadWindow(currentWindow)
-      .then((d) => !stale && setData(d))
-      .catch(() => !stale && setError("data"));
-    prefetchAround(atlas, currentWindow);
+    const timer = setTimeout(() => {
+      loadWindow(currentWindow)
+        .then((d) => {
+          if (stale) return;
+          setData(d);
+          prefetchAround(atlas, currentWindow);
+        })
+        .catch(() => {
+          // Moving the year to another period (or back) tries again.
+          if (stale) return;
+          setPlaying(false);
+          setToast(t("windowError"));
+        });
+    }, settleDelay());
     return () => {
       stale = true;
+      clearTimeout(timer);
     };
-  }, [atlas, currentWindow]);
+  }, [atlas, currentWindow, t]);
 
-  // Playback: advance by `speed` years per second, but never past a window that hasn't loaded yet.
-  const playbackState = useEffectEvent(() => ({ year, loaded: data?.window.id }));
+  // Playback: advance by `speed` years per second, but never past a window the map isn't showing.
+  const playbackState = useEffectEvent(() => ({ year, shown: shownWindow }));
   useEffect(() => {
     if (!playing || !atlas) return;
     let frame = 0;
     let last = performance.now();
     let carry = 0;
     const tick = (now: number) => {
-      carry += ((now - last) / 1000) * speed;
+      // Capped so that coming back to a hidden tab doesn't leap ahead by the time spent away.
+      carry += (Math.min(now - last, 100) / 1000) * speed;
       last = now;
-      const { year: current, loaded } = playbackState();
-      const ready = windowFor(atlas, current)?.id === loaded;
+      const { year: current, shown } = playbackState();
+      const ready = windowFor(atlas, current)?.id === shown;
       if (carry >= 1 && ready) {
         const step = Math.floor(carry);
         carry -= step;
-        const next = Math.min(atlas.end, current + step);
-        setYear(next);
-        if (next >= atlas.end) {
+        setYear((y) => Math.min(atlas.end, y + step));
+        if (current + step >= atlas.end) {
           setPlaying(false);
           return;
         }
@@ -148,23 +178,25 @@ export function App() {
     (selectedPolity ? selectedPolity[lang].at(-1) : selectedDispute ? selectedDispute[lang] : undefined);
 
   useEffect(() => {
-    const url = new URL(location.href);
-    url.searchParams.set("year", String(year));
-    url.searchParams.set("lang", lang);
-    url.searchParams.delete("p");
-    url.searchParams.delete("d");
-    if (selected) url.searchParams.set(selected.kind === "polity" ? "p" : "d", selected.id);
-    history.replaceState(history.state, "", url);
     document.title = `${selectedTitle ? `${selectedTitle} · ` : ""}${year} · Epochmap`;
-  }, [year, lang, selected, selectedTitle]);
+  }, [year, selectedTitle]);
+
+  // Browsers limit how often a page may rewrite its URL (Safari throws after 100 times in 10 s),
+  // so the URL is only written once the view rests, never during playback.
+  useEffect(() => {
+    if (playing) return;
+    const timer = setTimeout(() => {
+      try {
+        history.replaceState(history.state, "", urlFor(year, lang, selected));
+      } catch {
+        // Over the limit: the next change writes the URL again.
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [year, lang, selected, playing]);
 
   // Empire the selected polity belongs to in this year.
-  const group =
-    selected?.kind === "polity"
-      ? data?.borders.features.find(
-          (f) => f.properties.id === selected.id && f.properties.f <= year && year <= f.properties.t,
-        )?.properties.g
-      : undefined;
+  const group = currentLabel?.g;
   const groupPolity = group ? polityById.get(group) : undefined;
   const partOf = group
     ? {
@@ -213,11 +245,13 @@ export function App() {
   };
 
   const share = async () => {
+    // Built from the current state: the address bar may still be waiting for its next update.
+    const url = urlFor(year, lang, selected);
     try {
-      await navigator.clipboard.writeText(location.href);
+      await navigator.clipboard.writeText(url);
       setToast(t("linkCopied"));
     } catch {
-      setToast(location.href);
+      setToast(url);
     }
   };
 
@@ -235,9 +269,11 @@ export function App() {
     }
     if (e.metaKey || e.ctrlKey || e.altKey || searchOpen || aboutOpen) return;
     const target = e.target as HTMLElement;
-    // Text fields, buttons and links handle their own keys; the slider handles plain arrows itself.
+    // Text fields keep their keys; buttons and links keep Space and Enter; the slider handles
+    // plain arrows itself.
     const isSlider = target.matches?.("input[type=range]");
-    if (!isSlider && target.closest?.("input, textarea, select, button, a, [contenteditable]")) return;
+    if (!isSlider && target.closest?.("input, textarea, select, [contenteditable]")) return;
+    if ((e.key === " " || e.key === "Enter") && target.closest?.("button, a, summary, [role=button]")) return;
 
     const step = e.shiftKey ? 10 : 1;
     switch (e.key) {
@@ -300,19 +336,28 @@ export function App() {
       <GlobeMap
         data={data}
         disputes={disputes}
-        water={water}
+        waterLabels={waterLabels}
         year={year}
+        mapYear={mapYear}
         lang={lang}
         selected={selected}
         focus={focus}
         onSelect={setSelected}
-        onError={(kind) => setError(kind)}
+        onWindowShown={setShownWindow}
+        onError={(kind) => {
+          if (kind === "webgl") setError("webgl");
+          else {
+            setPlaying(false);
+            setToast(t("windowError"));
+          }
+        }}
       />
 
       <TopBar onSearch={() => setSearchOpen(true)} onShare={share} onAbout={() => setAboutOpen(true)} />
 
-      <div className="pointer-events-none absolute inset-x-3 bottom-[13.5rem] z-10 flex h-[40dvh] items-end justify-end sm:bottom-56 lg:top-20 lg:right-5 lg:left-auto lg:h-auto lg:w-[380px] lg:items-start short:top-16 short:right-3 short:bottom-[7.5rem] short:left-auto short:h-auto short:w-[min(340px,50vw)] short:items-start">
-        <AnimatePresence>
+      <div className="pointer-events-none absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[13.5rem] left-[max(0.75rem,env(safe-area-inset-left))] z-10 flex h-[40dvh] items-end justify-end sm:bottom-56 lg:top-20 lg:right-[max(1.25rem,env(safe-area-inset-right))] lg:left-auto lg:h-auto lg:w-[380px] lg:items-start short:top-16 short:right-[max(0.75rem,env(safe-area-inset-right))] short:bottom-[7.5rem] short:left-auto short:h-auto short:w-[min(340px,50vw)] short:items-start">
+        {/* popLayout: a closing panel leaves the layout at once, so it never squeezes the next one. */}
+        <AnimatePresence mode="popLayout">
           {selectedPolity && (
             <PolityPanel
               key={selectedPolity.id}
@@ -337,7 +382,7 @@ export function App() {
         </AnimatePresence>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 sm:pb-[max(1.25rem,env(safe-area-inset-bottom))] short:px-2 short:pt-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pt-3 pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] sm:pt-5 sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pl-[max(1.25rem,env(safe-area-inset-left))] short:pt-2 short:pr-[max(0.5rem,env(safe-area-inset-right))] short:pb-[max(0.5rem,env(safe-area-inset-bottom))] short:pl-[max(0.5rem,env(safe-area-inset-left))]">
         {atlas ? (
           <Timeline
             start={start}

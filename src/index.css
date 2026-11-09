@@ -21,6 +21,8 @@ html,
 body,
 #root {
   height: 100%;
+  /* No pull-to-refresh or rubber-band bounce while panning the globe. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -136,8 +138,30 @@ body {
 .timeline-range:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 9px rgb(232 201 138 / 0.22);
 }
+.timeline-range:hover::-moz-range-thumb,
+.timeline-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 9px rgb(232 201 138 / 0.22);
+}
 .timeline-range:focus-visible {
   outline: none;
+}
+/* Keyboard focus also gets a ring: the soft glow alone is easy to miss. */
+.timeline-range:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 3px;
+}
+.timeline-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 3px;
+}
+/* A finger-sized hit area on touch screens; the margins keep the layout as it was. */
+@media (pointer: coarse) {
+  .timeline-range {
+    display: block;
+    height: 44px;
+    margin-top: -13px;
+    margin-bottom: -7px;
+  }
 }
 
 /* Native dialogs fade and rise in (and back out) using @starting-style. */
@@ -185,8 +209,9 @@ body {
   filter: invert(1);
 }
 .maplibregl-ctrl-bottom-left {
-  /* Sit above the timeline. */
+  /* Sit above the timeline, clear of notches. */
   bottom: 13rem;
+  left: env(safe-area-inset-left);
 }
 @media (min-width: 640px) {
   .maplibregl-ctrl-bottom-left {

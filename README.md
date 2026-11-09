@@ -20,7 +20,7 @@
   <a href="README.tr.md"><img src="https://img.shields.io/badge/Türkçe-README-0a1526" alt="Türkçe README" /></a>
 </p>
 
-![The world in 1914 on Epochmap's globe](docs/hero.png)
+![Two thousand years of borders on Epochmap's globe, from the Roman Empire in year 1 to 2026](docs/demo.gif)
 
 ## Features
 
@@ -28,12 +28,14 @@
 - **Play history** at 10, 25 or 50 years a second and watch empires grow, split and disappear.
 - **Research-grade borders** from three academic and open datasets, cross-checked and corrected by hand (see [How accurate is it?](#how-accurate-is-it)).
 - **A real globe.** NASA's Blue Marble satellite imagery sits under the political map, and coastlines line up with it.
+- **Blue oceans, seas and lakes**, from light shelves to the navy deep sea, named in italics like on a printed atlas.
 - **Colours that work.** Neighbouring countries never share a colour (0 clashes across 4,600 neighbour pairs), a country keeps its colour through the centuries, and colonies wear their empire's colour.
 - **Disputed territories** such as Crimea, Kashmir, Western Sahara and Northern Cyprus are hatched, with a neutral note on who administers and who claims them.
 - **Click anything** for its Wikipedia summary, the years it existed and the empire it belonged to.
 - **Search** 1,380 polities in English or Turkish with <kbd>Ctrl</kbd> <kbd>K</kbd> / <kbd>⌘</kbd> <kbd>K</kbd>.
 - **English and Turkish**, switchable at any time, including the names on the map.
 - **Shareable links** that keep the year, the selection, the language and the camera.
+- **Works on phones, tablets and desktops**, with touch-sized controls and layouts for portrait and landscape.
 - A static site: no backend, no API keys, no tracking.
 
 ![The Ottoman Empire in 1453, with the info panel open](docs/detail.png)
@@ -75,11 +77,11 @@ Borders are still simplified for a world-scale map, and historical boundaries we
 2. simplifies them while keeping shared borders identical,
 3. finds a label point inside each shape.
 
-Names and Turkish translations come from Wikidata. The years are split into 19 windows of similar size, each stored as TopoJSON so borders shared between neighbours and between years are stored once. The full 2,000 years come to 23 MB.
+Names and Turkish translations come from Wikidata, oceans, seas and lakes from Natural Earth. The years are split into 19 windows of similar size, each stored as TopoJSON so borders shared between neighbours and between years are stored once. The full 2,000 years come to 23 MB.
 
 **Colours.** The build reads which polities share an edge in the topology, weighted by how many years they coexist. It then colours this graph greedily: the most connected polities pick first, and each takes the colour its coloured neighbours use least.
 
-**Rendering** ([`src/components/GlobeMap.tsx`](src/components/GlobeMap.tsx)). MapLibre GL JS 6 draws the globe. The year and the language are MapLibre _global state_. Each shape carries its own year range, and a style filter compares it with the global year, so moving the slider re-filters the map instantly without reloading data. Playback runs at 50 frames a second even at 50 years a second. When the year enters another window, the new window loads into a second layer stack and the two cross-fade.
+**Rendering** ([`src/components/GlobeMap.tsx`](src/components/GlobeMap.tsx)). MapLibre GL JS 6 draws the globe. The year and the language are MapLibre _global state_. Each shape carries its own year range, and a style filter compares it with the global year, so moving the slider re-filters the map instantly without reloading data. Border files are fetched and decoded inside MapLibre's web workers through a small `topojson://` protocol ([`src/lib/topojson-protocol.mjs`](src/lib/topojson-protocol.mjs)), so the page never freezes, even when the year jumps across centuries. When the year enters another window, the new window loads into a second layer stack and the two cross-fade.
 
 **Labels without a glyph server.** MapLibre draws text with the page's own fonts when a style has no `glyphs` URL, and reads the weight from the family name. So the variable Fraunces font is registered as "… Semibold" and "… Semibold Italic".
 

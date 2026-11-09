@@ -17,7 +17,7 @@
   <a href="README.md">English</a>
 </p>
 
-![Epochmap küresinde 1914 yılında dünya](docs/hero.png)
+![Epochmap küresinde iki bin yıllık sınırlar: 1 yılındaki Roma İmparatorluğu'ndan 2026'ya](docs/demo.gif)
 
 ## Özellikler
 
@@ -25,12 +25,14 @@
 - **Tarihi oynatın.** Saniyede 10, 25 veya 50 yıl hızla imparatorlukların büyüyüp bölünmesini ve yok olmasını izleyin.
 - **Akademik kaynaklı sınırlar.** Üç akademik ve açık veri seti kullanılıyor; bunlar birbiriyle karşılaştırılıp elle düzeltildi (bkz. [Ne kadar doğru?](#ne-kadar-doğru)).
 - **Gerçek bir küre.** Siyasi haritanın altında NASA'nın Blue Marble uydu görüntüsü var ve kıyılar bu görüntüyle örtüşüyor.
+- **Mavi okyanuslar, denizler ve göller.** Sığ kıta sahanlıklarından lacivert derin denizlere kadar; adları basılı atlaslardaki gibi italik yazılıyor.
 - **Doğru oturan renkler.** Komşu ülkeler hiçbir zaman aynı renkte değil (4.600 komşu çiftinde sıfır çakışma). Bir ülke yüzyıllar boyunca rengini koruyor, sömürgeler de bağlı oldukları imparatorluğun renginde.
 - **Tartışmalı bölgeler.** Kırım, Keşmir, Batı Sahra ve Kuzey Kıbrıs gibi bölgeler taralı gösteriliyor. Kimin yönettiği ve kimin hak iddia ettiği tarafsız bir notla açıklanıyor.
 - **Her şeye tıklayın.** Wikipedia özeti, haritada var olduğu yıllar ve bağlı olduğu imparatorluk açılır.
 - **Arama.** 1.380 devlet arasında Türkçe ya da İngilizce olarak <kbd>Ctrl</kbd> <kbd>K</kbd> / <kbd>⌘</kbd> <kbd>K</kbd> ile arayın.
 - **Türkçe ve İngilizce arayüz.** İstediğiniz an değiştirebilirsiniz; haritadaki adlar da değişir.
 - **Paylaşılabilir bağlantılar.** Yıl, seçim, dil ve kamera konumu bağlantıda saklanır.
+- **Telefonda, tablette ve bilgisayarda çalışır.** Dokunmaya uygun boyutta düğmeler, dikey ve yatay ekran için ayrı düzenler var.
 - **Tamamen statik site:** sunucu yok, API anahtarı yok, takip yok.
 
 ![1453'te Osmanlı İmparatorluğu ve açık bilgi paneli](docs/detail.png)
@@ -72,11 +74,11 @@ Sınırlar dünya ölçeğindeki bir harita için yine de sadeleştirilmiş duru
 2. Ortak sınırları birebir aynı tutarak şekilleri sadeleştiriyor.
 3. Her şeklin içinde bir etiket noktası buluyor.
 
-Adlar ve Türkçe karşılıkları Wikidata'dan geliyor. Yıllar boyutu birbirine yakın 19 zaman aralığına bölünüyor. Her aralık TopoJSON olarak saklanıyor, böylece komşular ve yıllar arasında ortak olan sınırlar bir kez yazılıyor. 2.000 yılın tamamı 23 MB tutuyor.
+Adlar ve Türkçe karşılıkları Wikidata'dan, okyanuslar, denizler ve göller Natural Earth'ten geliyor. Yıllar boyutu birbirine yakın 19 zaman aralığına bölünüyor. Her aralık TopoJSON olarak saklanıyor, böylece komşular ve yıllar arasında ortak olan sınırlar bir kez yazılıyor. 2.000 yılın tamamı 23 MB tutuyor.
 
 **Renkler.** Betik, topolojide hangi devletlerin ortak sınırı olduğunu ve kaç yıl birlikte var olduklarını hesaplıyor. Ardından bu grafı açgözlü yöntemle boyuyor: en çok komşusu olan devletler önce seçiyor, her biri boyanmış komşularının en az kullandığı rengi alıyor.
 
-**Çizim** ([`src/components/GlobeMap.tsx`](src/components/GlobeMap.tsx)). Küreyi MapLibre GL JS 6 çiziyor. Yıl ve dil MapLibre'nin _global state_ özelliğiyle tutuluyor. Her şekil kendi yıl aralığını taşıyor ve stil filtresi bunu seçili yılla karşılaştırıyor. Böylece kaydırıcı hareket edince harita veri yeniden yüklenmeden anında güncelleniyor. Saniyede 50 yıl hızında bile oynatma saniyede 50 karede akıyor. Yıl başka bir zaman aralığına geçince yeni aralık ikinci bir katman yığınına yükleniyor ve ikisi yumuşak geçişle yer değiştiriyor.
+**Çizim** ([`src/components/GlobeMap.tsx`](src/components/GlobeMap.tsx)). Küreyi MapLibre GL JS 6 çiziyor. Yıl ve dil MapLibre'nin _global state_ özelliğiyle tutuluyor. Her şekil kendi yıl aralığını taşıyor ve stil filtresi bunu seçili yılla karşılaştırıyor. Böylece kaydırıcı hareket edince harita veri yeniden yüklenmeden anında güncelleniyor. Sınır dosyaları MapLibre'nin arka plan iş parçacıklarında (web worker) küçük bir `topojson://` protokolüyle ([`src/lib/topojson-protocol.mjs`](src/lib/topojson-protocol.mjs)) indirilip çözülüyor; bu yüzden yıl yüzyıllar öteye atlasa bile sayfa donmuyor. Yıl başka bir zaman aralığına geçince yeni aralık ikinci bir katman yığınına yükleniyor ve ikisi yumuşak geçişle yer değiştiriyor.
 
 **Glyph sunucusu olmadan etiketler.** Stilde `glyphs` adresi yoksa MapLibre yazıları sayfanın kendi fontlarıyla çiziyor ve kalınlığı font adından okuyor. Bu yüzden değişken Fraunces fontu "… Semibold" ve "… Semibold Italic" adlarıyla kaydediliyor.
 

@@ -1,7 +1,5 @@
 import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
-import { feature } from "topojson-client";
-import type { GeometryCollection, Topology } from "topojson-specification";
-import { paletteColor } from "../lib/colors";
+import { topojsonUrl as protocolUrl } from "../lib/topojson-protocol.mjs";
 
 /** A span of years whose shapes are stored in one file. */
 export type Window = { id: string; from: number; to: number };
@@ -11,11 +9,11 @@ export type AtlasIndex = {
   end: number;
   eras: { cshapes: number; modern: number };
   windows: Window[];
-  /** Years in which any border changes, ascending. */
+  /** Years in which anything on the map changes, ascending. */
   changes: number[];
 };
 
-export type BorderProps = {
+export type LabelProps = {
   /** Polity identity (a Wikidata id when known). */
   id: string;
   /** Empire or sovereign it belongs to. */
@@ -24,17 +22,6 @@ export type BorderProps = {
   f: number;
   t: number;
   /** Area in km². */
-  a: number;
-  /** Palette index chosen by the data build. */
-  c: number;
-  /** Added on load. */
-  color: string;
-};
-
-export type LabelProps = {
-  id: string;
-  f: number;
-  t: number;
   a: number;
   en: string;
   tr: string;
@@ -69,21 +56,40 @@ export type PolityIndex = {
   groups: Record<string, { en: string; tr: string }>;
 };
 
-export type Borders = FeatureCollection<Polygon | MultiPolygon, BorderProps>;
 export type Labels = FeatureCollection<Point, LabelProps>;
 export type Disputes = FeatureCollection<Polygon | MultiPolygon, DisputeProps>;
-export type WindowData = { window: Window; borders: Borders; labels: Labels };
 
-/** Absolute URL for a file in public/data, honouring Vite's relative `base`. */
+/**
+ * One time window. Border shapes are large, so the page never holds them: the map's worker
+ * fetches and decodes them from `bordersUrl` (see lib/topojson-protocol.mjs).
+ */
+export type WindowData = { window: Window; bordersUrl: string; labels: Labels };
+
+/**
+ * Absolute URL for a file in public/data, honouring Vite's relative `base`. The data version
+ * changes with every data build, so browsers never mix files from two different builds.
+ */
 export function dataUrl(path: string): string {
-  return new URL(`${import.meta.env.BASE_URL}data/${path}`, document.baseURI).href;
+  return `${new URL(`${import.meta.env.BASE_URL}data/${path}`, document.baseURI).href}?v=${__DATA_VERSION__}`;
 }
 
-function fetchJson<T>(path: string): Promise<T> {
-  return fetch(dataUrl(path)).then((res) => {
-    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
-    return res.json() as Promise<T>;
-  });
+/** A URL the map loads through its TopoJSON protocol, optionally picking one named object. */
+export function topojsonUrl(path: string, object?: string): string {
+  return protocolUrl(dataUrl(path), object);
+}
+
+/** Fetches JSON, retrying a couple of times so a flaky connection doesn't break the page. */
+async function fetchJson<T>(path: string, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(dataUrl(path));
+      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+      return (await res.json()) as T;
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+    }
+  }
 }
 
 const cache = new Map<string, Promise<unknown>>();
@@ -114,33 +120,23 @@ function withCapitals<P extends { en: string; tr: string; enu?: string; tru?: st
   return labels;
 }
 
-/**
- * Decoded windows are large (tens of MB in memory for all of them), so only the most recently
- * used few are kept; the browser's HTTP cache makes going back to an evicted one cheap.
- */
-const MAX_WINDOWS = 4;
+/** Recently used windows' labels (small) stay in memory; Map order tracks recency. */
+const MAX_WINDOWS = 6;
 const windows = new Map<string, Promise<WindowData>>();
 
-/** Loads one time window: borders (TopoJSON, decoded here) and label points. */
+/** Loads one time window's labels; its borders are loaded by the map itself. */
 export function loadWindow(window: Window): Promise<WindowData> {
   const cached = windows.get(window.id);
   if (cached) {
-    // Map keeps insertion order: re-inserting marks the window as most recently used.
     windows.delete(window.id);
     windows.set(window.id, cached);
     return cached;
   }
-  const request = Promise.all([
-    fetchJson<Topology>(`borders/${window.id}.json`),
-    fetchJson<Labels>(`labels/${window.id}.json`),
-  ]).then(([topology, labels]) => {
-    const [object] = Object.values(topology.objects) as GeometryCollection<BorderProps>[];
-    const borders = (
-      object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
-    ) as Borders;
-    for (const f of borders.features) f.properties.color = paletteColor(f.properties.c);
-    return { window, borders, labels: withCapitals(labels) };
-  });
+  const request = fetchJson<Labels>(`labels/${window.id}.json`).then((labels) => ({
+    window,
+    bordersUrl: topojsonUrl(`borders/${window.id}.json`),
+    labels: withCapitals(labels),
+  }));
   request.catch(() => windows.delete(window.id));
   windows.set(window.id, request);
   for (const id of windows.keys()) {
@@ -148,6 +144,23 @@ export function loadWindow(window: Window): Promise<WindowData> {
     windows.delete(id);
   }
   return request;
+}
+
+export function windowFor(index: AtlasIndex, year: number): Window | undefined {
+  return index.windows.find((w) => w.from <= year && year <= w.to);
+}
+
+/**
+ * Warms up the windows next to the current one: their labels, and their border files in the
+ * browser's HTTP cache (at low priority), so stepping and playback across a boundary are quick.
+ */
+export function prefetchAround(index: AtlasIndex, window: Window): void {
+  const i = index.windows.indexOf(window);
+  for (const w of [index.windows[i + 1], index.windows[i - 1]]) {
+    if (!w) continue;
+    void loadWindow(w).catch(() => {});
+    void fetch(dataUrl(`borders/${w.id}.json`), { priority: "low" } as RequestInit).catch(() => {});
+  }
 }
 
 export type WaterLabelProps = {
@@ -161,34 +174,7 @@ export type WaterLabelProps = {
   tru?: string;
 };
 
-export type Water = {
-  ocean: FeatureCollection<Polygon | MultiPolygon>;
-  lakes: FeatureCollection<Polygon | MultiPolygon>;
-  labels: FeatureCollection<Point, WaterLabelProps>;
-};
-
-/** Oceans, lakes and their names, drawn over the satellite imagery. */
-export async function loadWater(): Promise<Water> {
-  const [topology, labels] = await Promise.all([
-    getJson<Topology>("water.json"),
-    getJson<FeatureCollection<Point, WaterLabelProps>>("water-labels.json"),
-  ]);
-  const objects = topology.objects as Record<string, GeometryCollection>;
-  const collection = (name: string) => {
-    const object = objects[name];
-    return (
-      object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
-    ) as FeatureCollection<Polygon | MultiPolygon>;
-  };
-  return { ocean: collection("ocean"), lakes: collection("lakes"), labels: withCapitals(labels) };
-}
-
-export function windowFor(index: AtlasIndex, year: number): Window | undefined {
-  return index.windows.find((w) => w.from <= year && year <= w.to);
-}
-
-/** Warms the cache for the windows around a year so scrubbing and playback feel instant. */
-export function prefetchAround(index: AtlasIndex, window: Window): void {
-  const i = index.windows.indexOf(window);
-  for (const w of [index.windows[i + 1], index.windows[i - 1]]) if (w) void loadWindow(w).catch(() => {});
+/** Names of oceans, seas and lakes; their shapes are loaded by the map from `water.json`. */
+export async function loadWaterLabels(): Promise<FeatureCollection<Point, WaterLabelProps>> {
+  return withCapitals(await getJson<FeatureCollection<Point, WaterLabelProps>>("water-labels.json"));
 }

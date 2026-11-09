@@ -1035,6 +1035,8 @@ async function main() {
         type: "Feature",
         properties: {
           id: s.row.id,
+          // The page reads "part of" from labels: border shapes only live in the map's worker.
+          ...(s.row.g ? { g: s.row.g } : {}),
           f: s.row.f,
           t: s.row.t,
           a: s.area,
@@ -1107,9 +1109,11 @@ async function main() {
   }
   await writeFile(join(OUT, "polities.json"), JSON.stringify({ polities: [...entries.values()], groups }));
 
-  // Years in which any border changes, for "previous / next change" navigation.
+  // Years in which anything on the map changes. Besides "previous / next change", the page
+  // filters the map by the last change year rather than the year itself, so this must cover
+  // every shape and every disputed area.
   const changes = new Set<number>();
-  for (const s of shaped) {
+  for (const s of [...shaped, ...disputeShapes]) {
     if (s.row.f > START_YEAR) changes.add(s.row.f);
     if (s.row.t < END_YEAR) changes.add(s.row.t + 1);
   }
