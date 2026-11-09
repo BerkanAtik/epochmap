@@ -12,10 +12,12 @@ import {
   loadDisputes,
   loadIndex,
   loadPolities,
+  loadWater,
   loadWindow,
   type Polity,
   type PolityIndex,
   prefetchAround,
+  type Water,
   type WindowData,
   windowFor,
 } from "./data/atlas";
@@ -48,6 +50,7 @@ export function App() {
   const [atlas, setAtlas] = useState<AtlasIndex | null>(null);
   const [polities, setPolities] = useState<PolityIndex | null>(null);
   const [disputes, setDisputes] = useState<Disputes | null>(null);
+  const [water, setWater] = useState<Water | null>(null);
   const [year, setYear] = useState(initial.year);
   const [data, setData] = useState<WindowData | null>(null);
   const [selected, setSelected] = useState<Selection | null>(initial.selection);
@@ -72,12 +75,15 @@ export function App() {
         setYear((y) => clampYear(y, index.start, index.end));
       })
       .catch(() => setError("data"));
-    // Search, the info panel and disputed areas simply have less to show if these fail.
+    // Search, the info panel, disputed areas and water simply have less to show if these fail.
     loadPolities()
       .then(setPolities)
       .catch(() => {});
     loadDisputes()
       .then(setDisputes)
+      .catch(() => {});
+    loadWater()
+      .then(setWater)
       .catch(() => {});
   }, []);
 
@@ -294,6 +300,7 @@ export function App() {
       <GlobeMap
         data={data}
         disputes={disputes}
+        water={water}
         year={year}
         lang={lang}
         selected={selected}
@@ -304,7 +311,7 @@ export function App() {
 
       <TopBar onSearch={() => setSearchOpen(true)} onShare={share} onAbout={() => setAboutOpen(true)} />
 
-      <div className="pointer-events-none absolute inset-x-3 bottom-[13.5rem] z-10 flex h-[40vh] items-end justify-end sm:bottom-56 lg:top-20 lg:right-5 lg:left-auto lg:h-auto lg:w-[380px] lg:items-start">
+      <div className="pointer-events-none absolute inset-x-3 bottom-[13.5rem] z-10 flex h-[40dvh] items-end justify-end sm:bottom-56 lg:top-20 lg:right-5 lg:left-auto lg:h-auto lg:w-[380px] lg:items-start short:top-16 short:right-3 short:bottom-[7.5rem] short:left-auto short:h-auto short:w-[min(340px,50vw)] short:items-start">
         <AnimatePresence>
           {selectedPolity && (
             <PolityPanel
@@ -330,7 +337,7 @@ export function App() {
         </AnimatePresence>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center p-3 sm:p-5">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pt-5 sm:pb-[max(1.25rem,env(safe-area-inset-bottom))] short:px-2 short:pt-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {atlas ? (
           <Timeline
             start={start}

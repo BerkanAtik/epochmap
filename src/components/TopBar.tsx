@@ -14,26 +14,26 @@ export function TopBar({ onSearch, onShare, onAbout }: Props) {
   const t = useT();
   const lang = useLang();
   return (
-    <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3 sm:p-5">
+    <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-5 sm:pt-[max(1.25rem,env(safe-area-inset-top))] short:px-2 short:pt-[max(0.5rem,env(safe-area-inset-top))]">
       <div className="glass pointer-events-auto flex items-center gap-3 rounded-2xl py-1.5 pr-4 pl-2">
         <Logo className="size-9 drop-shadow-[0_0_12px_rgba(232,201,138,0.35)]" />
         <div>
           <h1 className="font-display font-semibold text-ink text-xl leading-none tracking-tight">
             Epochmap
           </h1>
-          <p className="mt-1 hidden text-ink/55 text-xs sm:block">{t("tagline")}</p>
+          <p className="mt-1 hidden text-ink/55 text-xs lg:block">{t("tagline")}</p>
         </div>
       </div>
 
-      <nav className="pointer-events-auto flex items-center gap-2">
+      <nav className="pointer-events-auto flex min-w-0 items-center gap-2">
         <button
           type="button"
           onClick={onSearch}
-          className="glass flex h-10 items-center gap-2 rounded-full px-3.5 text-ink/75 text-sm transition hover:text-ink sm:min-w-56"
+          className="glass flex h-10 min-w-0 items-center gap-2 rounded-full px-3.5 text-ink/75 text-sm transition hover:text-ink sm:w-60 lg:w-72"
           aria-label={t("search")}
         >
           <Search size={16} />
-          <span className="hidden flex-1 text-left sm:inline">{t("searchPlaceholder")}</span>
+          <span className="hidden min-w-0 flex-1 truncate text-left sm:inline">{t("searchPlaceholder")}</span>
           <kbd className="hidden rounded-md border border-white/15 px-1.5 font-sans text-[11px] text-ink/50 sm:inline">
             {isMac ? "⌘K" : "Ctrl K"}
           </kbd>

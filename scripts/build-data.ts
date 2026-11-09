@@ -24,7 +24,15 @@ import mapshaper from "mapshaper";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import { hash, PALETTE } from "../src/lib/colors.ts";
-import { CSHAPES_NAMES, DISPUTES, MODERN_RENAMES, NAME_FIXES, type NameFix } from "./sources.ts";
+import {
+  CSHAPES_NAMES,
+  DISPUTES,
+  MODERN_RENAMES,
+  NAME_FIXES,
+  type NameFix,
+  TURKISH_NAMES,
+  TURKISH_PATTERNS,
+} from "./sources.ts";
 
 export const START_YEAR = 0;
 export const END_YEAR = 2026;
@@ -198,6 +206,52 @@ async function wikidata(ids: string[]): Promise<Map<string, WikidataInfo>> {
   return new Map(Object.entries(cache));
 }
 
+/**
+ * Ids of people rather than polities (Cliopatria tags Denmark with its king Christopher II).
+ * Their labels and Wikipedia articles must not be used. One small SPARQL query per 100 ids, cached.
+ */
+async function wikidataMistakes(ids: string[]): Promise<Set<string>> {
+  const file = join(CACHE, "wikidata-humans.json");
+  const cache: Record<string, boolean> = existsSync(file) ? JSON.parse(await readFile(file, "utf8")) : {};
+  const missing = [...new Set(ids)].filter((id) => /^Q\d+$/.test(id) && !(id in cache));
+  for (let i = 0; i < missing.length; i += 100) {
+    const batch = missing.slice(i, i + 100);
+    // Q5: human.
+    const query = `SELECT DISTINCT ?item WHERE { VALUES ?item { ${batch.map((id) => `wd:${id}`).join(" ")} }
+      ?item wdt:P31 wd:Q5 }`;
+    let res: Response | undefined;
+    // The public endpoint has occasional 5xx hiccups: retry a few times with a growing pause.
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      res = await fetch("https://query.wikidata.org/sparql", {
+        method: "POST",
+        headers: {
+          "user-agent": USER_AGENT,
+          accept: "application/sparql-results+json",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ query }),
+      });
+      if (res.ok || res.status < 500) break;
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+    if (!res?.ok) throw new Error(`Wikidata SPARQL HTTP ${res?.status}`);
+    const data = (await res.json()) as { results: { bindings: { item: { value: string } }[] } };
+    const wrong = new Set(data.results.bindings.map((b) => b.item.value.split("/").pop()));
+    for (const id of batch) cache[id] = wrong.has(id);
+  }
+  await writeFile(file, JSON.stringify(cache));
+  return new Set(Object.keys(cache).filter((id) => cache[id]));
+}
+
+/** Turkish for a name with no Turkish label anywhere: the curated list, then common patterns. */
+function turkishFallback(en: string): string | undefined {
+  const known = TURKISH_NAMES[en];
+  if (known) return known;
+  for (const [pattern, replacement] of TURKISH_PATTERNS)
+    if (pattern.test(en)) return en.replace(pattern, replacement);
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Sources
 
@@ -322,6 +376,81 @@ async function interiorPoints(geometries: Geometry[]): Promise<(number[] | undef
   const result: (number[] | undefined)[] = new Array(geometries.length);
   for (const p of points.features) result[p.properties.i] = p.geometry?.coordinates;
   return result;
+}
+
+/**
+ * Water drawn over the satellite imagery, whose deep oceans are almost black and whose lakes
+ * barely show: oceans (seas included) and lakes as TopoJSON, plus label points for oceans,
+ * main seas and large lakes in English and Turkish.
+ */
+async function buildWater(): Promise<void> {
+  const ocean = await loadNaturalEarth("ne_50m_ocean");
+  const lakes = await loadNaturalEarth("ne_50m_lakes");
+  const marine = await loadNaturalEarth("ne_50m_geography_marine_polys");
+  const shapesOnly = (c: Collection<NeProps>) =>
+    JSON.stringify({
+      type: "FeatureCollection",
+      features: c.features.map((f) => ({ type: "Feature", properties: {}, geometry: f.geometry })),
+    });
+
+  const out = await mapshaper.applyCommands(
+    [
+      "-i",
+      "ocean.json",
+      "lakes.json",
+      "combine-files",
+      "-simplify",
+      "interval=2000",
+      "keep-shapes",
+      "-o",
+      "water.json",
+      "format=topojson",
+      "quantization=100000",
+    ],
+    { "ocean.json": shapesOnly(ocean), "lakes.json": shapesOnly(lakes) },
+  );
+  await writeFile(join(OUT, "water.json"), outputFile(out, "water.json"));
+
+  // Oceans and main seas, then lakes large enough to be named at a world scale.
+  type WaterLabel = { en: string; tr: string; k: "ocean" | "sea" | "lake"; z: number };
+  const labelled: { label: WaterLabel; geometry: Geometry }[] = [];
+  for (const f of marine.features) {
+    const p = f.properties;
+    if (Number(p.scalerank) > 2) continue;
+    const en = String(p.name_en ?? p.name);
+    labelled.push({
+      label: {
+        en,
+        tr: String(p.name_tr ?? en),
+        k: p.featurecla === "ocean" ? "ocean" : "sea",
+        z: Number(p.min_label ?? 2),
+      },
+      geometry: f.geometry,
+    });
+  }
+  for (const f of lakes.features) {
+    const p = f.properties;
+    const minLabel = Number(p.min_label ?? 99);
+    if (minLabel > 3.6 || !p.name) continue;
+    const en = String(p.name);
+    const trBase = String(p.name_tr ?? p.name_en ?? en);
+    // Natural Earth's Turkish lake names drop the word "lake" ("Victoria"); add it back.
+    const tr = /göl|deniz|lagün/i.test(trBase) ? trBase : `${trBase} Gölü`;
+    labelled.push({ label: { en, tr, k: "lake", z: minLabel }, geometry: f.geometry });
+  }
+  const points = await interiorPoints(labelled.map((l) => l.geometry));
+  await writeFile(
+    join(OUT, "water-labels.json"),
+    JSON.stringify({
+      type: "FeatureCollection",
+      features: labelled.flatMap((l, i) => {
+        const point = points[i];
+        if (!point) return [];
+        const coordinates = point.map((c) => Math.round(c * 100) / 100);
+        return [{ type: "Feature", properties: l.label, geometry: { type: "Point", coordinates } }];
+      }),
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -827,9 +956,12 @@ async function main() {
   });
 
   console.log("Simplifying (a minute or two)");
+  // Historical shapes are clipped to the same coastline as the water layer, so no border
+  // spills into the sea; Natural Earth's own countries already follow it.
+  const land = landGeoJson();
   const shaped = [
-    ...(await shape(ancient, TOLERANCE.ancient, landGeoJson())),
-    ...(await shape(cshapes, TOLERANCE.cshapes)),
+    ...(await shape(ancient, TOLERANCE.ancient, land)),
+    ...(await shape(cshapes, TOLERANCE.cshapes, land)),
     ...(await shape(modern, TOLERANCE.modern)),
   ];
   const disputeShapes = await shape(disputes, TOLERANCE.disputes);
@@ -837,18 +969,33 @@ async function main() {
   console.log("Wikidata");
   const allRows = shaped.map((s) => s.row);
   const groupIds = allRows.map((r) => r.g).filter((g): g is string => !!g);
-  const info = await wikidata([...allRows.map((r) => r.wikidata ?? ""), ...groupIds]);
-  if (REPORT) reportWikidataMismatches(allRows, info);
+  const allIds = [...allRows.map((r) => r.wikidata ?? ""), ...groupIds];
+  const info = await wikidata(allIds);
+  const mistakes = await wikidataMistakes(allIds);
+  // "History of …" topics are not polities either: their names and articles are about history.
+  for (const [id, wd] of info) {
+    if (/^history of /i.test(wd.en ?? "") || /\btarihi$/i.test(wd.tr ?? "")) mistakes.add(id);
+  }
+  if (REPORT) {
+    reportWikidataMismatches(allRows, info);
+    console.log("\nIds that are people or history topics (labels and articles ignored):");
+    for (const id of mistakes) {
+      const names = [...new Set(allRows.filter((r) => r.wikidata === id).map((r) => r.en))];
+      console.log(`  ${id} ${info.get(id)?.en ?? ""}  <-  ${names.join(", ")}`);
+    }
+  }
+  /** Wikidata details for a row, unless its id is known to be wrong. */
+  const reliable = (id: string | undefined) => (id && !mistakes.has(id) ? info.get(id) : undefined);
 
-  // English keeps the source's period-specific names. Turkish comes from a name fix, then Wikidata,
-  // then Natural Earth's Turkish name for a country of the same English name.
+  // English keeps the source's period-specific names. Turkish comes from a name fix, then
+  // Wikidata, then Natural Earth (same English name), then the curated list and patterns.
   const neTurkish = new Map(ne.features.map((f) => [String(f.properties.NAME_EN), f.properties.NAME_TR]));
   for (const r of allRows) {
     const fromNe = neTurkish.get(r.en);
     // A label like "Katar tarihi" means the id points at a history article, not the polity.
-    const wikidataTr = r.wikidata ? info.get(r.wikidata)?.tr : undefined;
+    const wikidataTr = reliable(r.wikidata)?.tr;
     const usableTr = wikidataTr && !/\btarihi$/i.test(wikidataTr) ? wikidataTr : undefined;
-    r.tr ??= usableTr ?? (fromNe ? String(fromNe) : undefined);
+    r.tr ??= usableTr ?? (fromNe ? String(fromNe) : undefined) ?? turkishFallback(r.en);
   }
 
   console.log("Writing");
@@ -857,6 +1004,7 @@ async function main() {
   await mkdir(join(OUT, "labels"), { recursive: true });
   // The generated data carries its own license (CC BY-NC-SA, because of CShapes).
   await copyFile(join(ROOT, "scripts", "DATA_LICENSE.md"), join(OUT, "LICENSE.md"));
+  await buildWater();
 
   const spans = windows(shaped);
   const topologies: Topology[] = [];
@@ -946,14 +1094,14 @@ async function main() {
     const lastSpan = e.spans.at(-1);
     if (lastSpan && r.f <= lastSpan[1] + 1) lastSpan[1] = Math.max(lastSpan[1], r.t);
     else e.spans.push([r.f, r.t]);
-    const wd = r.wikidata ? info.get(r.wikidata) : undefined;
+    const wd = reliable(r.wikidata);
     e.wiki.en ??= wd?.enwiki;
     e.wiki.tr ??= wd?.trwiki;
     entries.set(r.id, e);
   }
   const groups: Record<string, { en: string; tr: string }> = {};
   for (const g of new Set(groupIds)) {
-    const wd = info.get(g);
+    const wd = reliable(g);
     const known = entries.get(g);
     groups[g] = { en: known?.en.at(-1) ?? wd?.en ?? g, tr: known?.tr.at(-1) ?? wd?.tr ?? wd?.en ?? g };
   }

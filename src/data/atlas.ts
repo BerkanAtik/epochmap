@@ -79,16 +79,20 @@ export function dataUrl(path: string): string {
   return new URL(`${import.meta.env.BASE_URL}data/${path}`, document.baseURI).href;
 }
 
+function fetchJson<T>(path: string): Promise<T> {
+  return fetch(dataUrl(path)).then((res) => {
+    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+    return res.json() as Promise<T>;
+  });
+}
+
 const cache = new Map<string, Promise<unknown>>();
 
-/** Fetches JSON once per path; failed requests are dropped from the cache so they can be retried. */
+/** Fetches a small JSON file once; failed requests are dropped from the cache so they can be retried. */
 function getJson<T>(path: string): Promise<T> {
   let request = cache.get(path) as Promise<T> | undefined;
   if (!request) {
-    request = fetch(dataUrl(path)).then((res) => {
-      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
-      return res.json() as Promise<T>;
-    });
+    request = fetchJson<T>(path);
     request.catch(() => cache.delete(path));
     cache.set(path, request);
   }
@@ -99,33 +103,84 @@ export const loadIndex = () => getJson<AtlasIndex>("index.json");
 export const loadPolities = () => getJson<PolityIndex>("polities.json");
 export const loadDisputes = () => getJson<Disputes>("disputes.json");
 
+/** Adds upper-case names for the small-caps labels, with each language's rules ("i" → "İ" in Turkish). */
+function withCapitals<P extends { en: string; tr: string; enu?: string; tru?: string }>(
+  labels: FeatureCollection<Point, P>,
+): FeatureCollection<Point, P> {
+  for (const l of labels.features) {
+    l.properties.enu = l.properties.en.toLocaleUpperCase("en");
+    l.properties.tru = l.properties.tr.toLocaleUpperCase("tr");
+  }
+  return labels;
+}
+
+/**
+ * Decoded windows are large (tens of MB in memory for all of them), so only the most recently
+ * used few are kept; the browser's HTTP cache makes going back to an evicted one cheap.
+ */
+const MAX_WINDOWS = 4;
 const windows = new Map<string, Promise<WindowData>>();
 
 /** Loads one time window: borders (TopoJSON, decoded here) and label points. */
 export function loadWindow(window: Window): Promise<WindowData> {
-  let request = windows.get(window.id);
-  if (!request) {
-    request = Promise.all([
-      getJson<Topology>(`borders/${window.id}.json`),
-      getJson<Labels>(`labels/${window.id}.json`),
-    ]).then(([topology, labels]) => {
-      const [object] = Object.values(topology.objects) as GeometryCollection<BorderProps>[];
-      const borders = (
-        object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
-      ) as Borders;
-      for (const f of borders.features) f.properties.color = paletteColor(f.properties.c);
-      // Capitals for the small-caps labels of large polities, with each language's own rules
-      // (Turkish upper-cases "i" to "İ").
-      for (const l of labels.features) {
-        l.properties.enu = l.properties.en.toLocaleUpperCase("en");
-        l.properties.tru = l.properties.tr.toLocaleUpperCase("tr");
-      }
-      return { window, borders, labels };
-    });
-    request.catch(() => windows.delete(window.id));
-    windows.set(window.id, request);
+  const cached = windows.get(window.id);
+  if (cached) {
+    // Map keeps insertion order: re-inserting marks the window as most recently used.
+    windows.delete(window.id);
+    windows.set(window.id, cached);
+    return cached;
+  }
+  const request = Promise.all([
+    fetchJson<Topology>(`borders/${window.id}.json`),
+    fetchJson<Labels>(`labels/${window.id}.json`),
+  ]).then(([topology, labels]) => {
+    const [object] = Object.values(topology.objects) as GeometryCollection<BorderProps>[];
+    const borders = (
+      object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
+    ) as Borders;
+    for (const f of borders.features) f.properties.color = paletteColor(f.properties.c);
+    return { window, borders, labels: withCapitals(labels) };
+  });
+  request.catch(() => windows.delete(window.id));
+  windows.set(window.id, request);
+  for (const id of windows.keys()) {
+    if (windows.size <= MAX_WINDOWS) break;
+    windows.delete(id);
   }
   return request;
+}
+
+export type WaterLabelProps = {
+  en: string;
+  tr: string;
+  /** Kind of water body. */
+  k: "ocean" | "sea" | "lake";
+  /** Zoom from which the name is shown. */
+  z: number;
+  enu?: string;
+  tru?: string;
+};
+
+export type Water = {
+  ocean: FeatureCollection<Polygon | MultiPolygon>;
+  lakes: FeatureCollection<Polygon | MultiPolygon>;
+  labels: FeatureCollection<Point, WaterLabelProps>;
+};
+
+/** Oceans, lakes and their names, drawn over the satellite imagery. */
+export async function loadWater(): Promise<Water> {
+  const [topology, labels] = await Promise.all([
+    getJson<Topology>("water.json"),
+    getJson<FeatureCollection<Point, WaterLabelProps>>("water-labels.json"),
+  ]);
+  const objects = topology.objects as Record<string, GeometryCollection>;
+  const collection = (name: string) => {
+    const object = objects[name];
+    return (
+      object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
+    ) as FeatureCollection<Polygon | MultiPolygon>;
+  };
+  return { ocean: collection("ocean"), lakes: collection("lakes"), labels: withCapitals(labels) };
 }
 
 export function windowFor(index: AtlasIndex, year: number): Window | undefined {

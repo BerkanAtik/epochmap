@@ -61,7 +61,7 @@ export function Timeline(props: Props) {
   return (
     <section
       aria-label={t("timeline")}
-      className="pointer-events-auto w-full max-w-4xl rounded-3xl border border-white/10 bg-panel p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:px-6 sm:pt-5 sm:pb-4"
+      className="pointer-events-auto w-full max-w-4xl rounded-3xl border border-white/10 bg-panel p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:px-6 sm:pt-5 sm:pb-4 short:rounded-2xl short:px-4 short:py-2.5"
     >
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
@@ -128,7 +128,7 @@ export function Timeline(props: Props) {
       {/* Border-change density */}
       <div
         aria-hidden
-        className="mt-3 flex h-6 items-end gap-px"
+        className="mt-3 flex h-6 items-end gap-px short:hidden"
         style={{ marginInline: THUMB_R }}
         title={t("bordersChanging")}
       >
@@ -158,7 +158,7 @@ export function Timeline(props: Props) {
       />
 
       {/* Eras and century marks */}
-      <div aria-hidden className="relative mt-1 h-5 text-[11px]">
+      <div aria-hidden className="relative mt-1 h-5 text-[11px] short:hidden">
         {eras.map((era, i) => {
           const isCurrent = eraOf(year, lang) === era.key;
           // Recent eras are short on a 2,000-year axis: name them only while they are on screen.
@@ -187,7 +187,7 @@ export function Timeline(props: Props) {
           );
         })}
       </div>
-      <div aria-hidden className="relative mt-0.5 h-4 text-[10px] text-ink/40 tabular-nums">
+      <div aria-hidden className="relative mt-0.5 h-4 text-[10px] text-ink/40 tabular-nums short:hidden">
         {TICKS.filter((y) => y >= start && y <= end).map((y) => (
           <span key={y} className="-translate-x-1/2 absolute" style={{ left: at(y) }}>
             {y}
@@ -210,7 +210,8 @@ function YearInput(props: {
   const { year, start, end, label, animate, onYear } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const big = "font-display font-semibold text-4xl text-ink tabular-nums leading-none sm:text-5xl";
+  const big =
+    "font-display font-semibold text-4xl text-ink tabular-nums leading-none sm:text-5xl short:text-3xl";
 
   if (editing) {
     const commit = () => {
@@ -224,7 +225,7 @@ function YearInput(props: {
         autoFocus
         inputMode="numeric"
         aria-label={label}
-        className={`${big} mt-1 h-10 w-36 rounded-lg bg-white/5 px-2 outline-none ring-1 ring-gold/60 sm:h-12`}
+        className={`${big} mt-1 h-10 w-36 rounded-lg bg-white/5 px-2 outline-none ring-1 ring-gold/60 sm:h-12 short:h-9`}
         value={draft}
         onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, "").slice(0, 4))}
         onBlur={commit}
@@ -240,7 +241,7 @@ function YearInput(props: {
   return (
     <button
       type="button"
-      className="group relative mt-1 block h-10 overflow-hidden rounded-lg text-left sm:h-12"
+      className="group relative mt-1 block h-10 overflow-hidden rounded-lg text-left sm:h-12 short:mt-0 short:h-9"
       onClick={() => {
         setDraft(String(year));
         setEditing(true);

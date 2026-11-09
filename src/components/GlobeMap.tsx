@@ -12,7 +12,7 @@ import {
 } from "maplibre-gl";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { Disputes, WindowData } from "../data/atlas";
+import type { Disputes, Water, WindowData } from "../data/atlas";
 import { LABEL_FONT, LABEL_FONT_ITALIC, loadMapFonts } from "../lib/fonts";
 import { graticule } from "../lib/graticule";
 import type { Lang } from "../lib/i18n";
@@ -20,18 +20,30 @@ import type { Lang } from "../lib/i18n";
 setWorkerUrl(workerUrl);
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** Touch screens have no hover: a name tooltip would stick after every tap. */
+const canHover = matchMedia("(hover: hover)").matches;
 const FADE_MS = reducedMotion ? 0 : 500;
 
-/** NASA's Blue Marble: Next Generation, a cloud-free true-colour mosaic (public domain). */
+/**
+ * NASA's Blue Marble with shaded relief and bathymetry (public domain): land as seen from
+ * space, and oceans in blue, lighter over continental shelves and navy over the deep sea.
+ */
 const IMAGERY =
-  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_NextGeneration/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg";
+  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg";
 
 /** Polities at least this large (km²) get spaced small-caps labels, like on a printed atlas. */
 const LARGE_AREA = 1_500_000;
 const FILL_OPACITY = 0.46;
 
 const COLORS = {
-  ocean: "#06101f",
+  /** Shows while imagery loads (and if it can't), so the sea is never black. */
+  background: "#174a7c",
+  /** A light blue wash over the imagery's oceans; the deep sea would otherwise look almost black. */
+  oceanTint: "#2f7fd0",
+  /** Lakes are barely visible in the imagery, so they are drawn as solid water. */
+  lake: "#3478bf",
+  waterLabel: "#cfe6ff",
+  waterHalo: "rgba(10, 42, 82, 0.7)",
   grid: "rgba(214, 226, 255, 0.07)",
   border: "rgba(255, 249, 235, 0.78)",
   label: "#fbf4e4",
@@ -198,23 +210,34 @@ function buildStyle(year: number, lang: Lang): StyleSpecification {
           "Borders: <a href='https://github.com/Seshat-Global-History-Databank/cliopatria'>Cliopatria</a>, <a href='https://icr.ethz.ch/data/cshapes/'>CShapes 2.0</a>, <a href='https://www.naturalearthdata.com/'>Natural Earth</a>",
       },
       "dispute-labels": { type: "geojson", data: EMPTY },
+      ocean: { type: "geojson", data: EMPTY },
+      lakes: { type: "geojson", data: EMPTY },
+      "water-labels": { type: "geojson", data: EMPTY },
     },
     layers: [
-      { id: "ocean", type: "background", paint: { "background-color": COLORS.ocean } },
+      { id: "background", type: "background", paint: { "background-color": COLORS.background } },
       {
         id: "imagery",
         type: "raster",
         source: "imagery",
-        paint: {
-          "raster-saturation": -0.2,
-          "raster-contrast": 0.08,
-          "raster-brightness-max": 0.82,
-          "raster-fade-duration": 200,
-        },
+        paint: { "raster-contrast": 0.06, "raster-fade-duration": 200 },
       },
       { id: "grid", type: "line", source: "grid", paint: { "line-color": COLORS.grid, "line-width": 0.7 } },
       ...a.fills,
       ...b.fills,
+      // Water above the countries keeps coasts clean and lakes blue whatever the period.
+      {
+        id: "ocean",
+        type: "fill",
+        source: "ocean",
+        paint: { "fill-color": COLORS.oceanTint, "fill-opacity": 0.34, "fill-antialias": false },
+      },
+      {
+        id: "lakes",
+        type: "fill",
+        source: "lakes",
+        paint: { "fill-color": COLORS.lake, "fill-opacity": 0.95 },
+      },
       ...a.lines,
       ...b.lines,
       {
@@ -235,6 +258,8 @@ function buildStyle(year: number, lang: Lang): StyleSpecification {
           "line-dasharray": [2, 1.5],
         },
       },
+      // Water names sit below country names, so countries win when labels collide.
+      ...waterLabelLayers(),
       labelLayer("a"),
       labelLayer("b"),
       {
@@ -257,6 +282,59 @@ function buildStyle(year: number, lang: Lang): StyleSpecification {
       },
     ],
   };
+}
+
+/**
+ * Ocean, sea and lake names in italic light blue, like on a printed atlas: oceans from the
+ * start, main seas once the globe fills the screen, smaller seas and lakes closer in.
+ */
+function waterLabelLayers(): LayerSpecification[] {
+  const paint = {
+    "text-color": COLORS.waterLabel,
+    "text-halo-color": COLORS.waterHalo,
+    "text-halo-width": 1.2,
+    "text-halo-blur": 0.6,
+  };
+  const layout = (size: ExpressionSpecification, extra: Record<string, unknown> = {}) => ({
+    "text-field": localName,
+    "text-font": [LABEL_FONT_ITALIC],
+    "text-size": size,
+    "text-max-width": 7,
+    "text-padding": 6,
+    ...extra,
+  });
+  return [
+    {
+      id: "water-labels-ocean",
+      type: "symbol",
+      source: "water-labels",
+      filter: ["==", ["get", "k"], "ocean"],
+      layout: layout(["interpolate", ["linear"], ["zoom"], 1, 12, 4, 18], {
+        "text-field": localUpper,
+        "text-letter-spacing": 0.32,
+        "text-max-width": 12,
+      }),
+      paint,
+    },
+    {
+      id: "water-labels-sea",
+      type: "symbol",
+      source: "water-labels",
+      minzoom: 1.8,
+      filter: ["all", ["==", ["get", "k"], "sea"], ["<=", ["get", "z"], 2]],
+      layout: layout(["interpolate", ["linear"], ["zoom"], 2, 10.5, 6, 15]),
+      paint,
+    },
+    {
+      id: "water-labels-minor",
+      type: "symbol",
+      source: "water-labels",
+      minzoom: 3.2,
+      filter: ["any", ["==", ["get", "k"], "lake"], [">", ["get", "z"], 2]],
+      layout: layout(["interpolate", ["linear"], ["zoom"], 3, 10, 7, 13]),
+      paint,
+    },
+  ] as LayerSpecification[];
 }
 
 /** Diagonal stripes for disputed areas, drawn once at 2× for sharpness. */
@@ -292,14 +370,23 @@ function zoomForArea(area: number): number {
   return Math.min(5, Math.max(1.5, Math.log2(9_000 / width)));
 }
 
+/** Very short screens (phones held sideways) use the compact layout from index.css. */
+const isShort = () => window.innerHeight <= 520;
+
 /** Centres the globe in the space between the top bar and the timeline. */
 function basePadding(): PaddingOptions {
+  if (isShort()) return { top: 52, bottom: 110, left: 0, right: 0 };
   return { top: 64, bottom: window.innerWidth >= 640 ? 200 : 210, left: 0, right: 0 };
 }
 
-/** Where a flown-to place lands relative to the centre, clear of the info panel (side on desktop, bottom sheet on smaller screens). */
+/**
+ * Where a flown-to place lands relative to the centre, clear of the info panel: it sits on the
+ * right on desktops and short screens, and at the bottom on taller phones and tablets.
+ */
 function focusOffset(): [number, number] {
-  return window.innerWidth >= 1024 ? [-200, 0] : [0, -Math.round(window.innerHeight * 0.2)];
+  if (window.innerWidth >= 1024) return [-200, 0];
+  if (isShort()) return [-Math.round(window.innerWidth * 0.2), 0];
+  return [0, -Math.round(window.innerHeight * 0.2)];
 }
 
 export type Selection = { kind: "polity" | "dispute"; id: string };
@@ -308,6 +395,7 @@ export type FocusRequest = { id: string; key: number };
 type Props = {
   data: WindowData | null;
   disputes: Disputes | null;
+  water: Water | null;
   year: number;
   lang: Lang;
   selected: Selection | null;
@@ -316,7 +404,7 @@ type Props = {
   onError: (kind: "webgl") => void;
 };
 
-export function GlobeMap({ data, disputes, year, lang, selected, focus, onSelect, onError }: Props) {
+export function GlobeMap({ data, disputes, water, year, lang, selected, focus, onSelect, onError }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const active = useRef<Slot>("b");
@@ -413,7 +501,7 @@ export function GlobeMap({ data, disputes, year, lang, selected, focus, onSelect
         const hit = hitAt(e.point);
         setHover(hit);
         const name = hit && nameOf(hit);
-        setTooltip(name ? { name, x: e.point.x, y: e.point.y } : null);
+        setTooltip(name && canHover ? { name, x: e.point.x, y: e.point.y } : null);
       });
       m.on("mouseout", () => {
         setHover(null);
@@ -454,6 +542,14 @@ export function GlobeMap({ data, disputes, year, lang, selected, focus, onSelect
     };
     map.getSource<GeoJSONSource>("dispute-labels")?.setData(points);
   }, [disputes, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !water) return;
+    map.getSource<GeoJSONSource>("ocean")?.setData(water.ocean);
+    map.getSource<GeoJSONSource>("lakes")?.setData(water.lakes);
+    map.getSource<GeoJSONSource>("water-labels")?.setData(water.labels);
+  }, [water, ready]);
 
   // Cross-fade to a new time window.
   useEffect(() => {

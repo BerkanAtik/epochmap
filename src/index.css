@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Phones held sideways and other very short screens get a compact layout. */
+@custom-variant short (@media (max-height: 520px));
+
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
@@ -50,6 +53,11 @@ body {
   transition:
     color 150ms,
     background-color 150ms;
+  /* Fingers need bigger targets than mouse pointers. */
+  @media (pointer: coarse) {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
   &:hover:not(:disabled) {
     color: var(--color-ink);
     background-color: rgb(255 255 255 / 0.08);
@@ -183,6 +191,11 @@ body {
 @media (min-width: 640px) {
   .maplibregl-ctrl-bottom-left {
     bottom: 12.5rem;
+  }
+}
+@media (max-height: 520px) {
+  .maplibregl-ctrl-bottom-left {
+    bottom: 7.5rem;
   }
 }
 
