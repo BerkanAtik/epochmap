@@ -1,59 +1,51 @@
-import type { Lang } from "./i18n";
-
-export type Era = "prehistory" | "ancient" | "medieval" | "earlyModern" | "modern";
-
-/** Conventional era boundaries; each era starts at `from` (inclusive). */
-export const ERAS: readonly { id: Era; from: number }[] = [
-  { id: "prehistory", from: Number.NEGATIVE_INFINITY },
-  { id: "ancient", from: -3000 },
-  { id: "medieval", from: 500 },
-  { id: "earlyModern", from: 1500 },
-  { id: "modern", from: 1800 },
-];
-
-export function eraOf(year: number): Era {
-  let era: Era = "prehistory";
-  for (const e of ERAS) if (year >= e.from) era = e.id;
-  return era;
-}
-
-export type YearParts = {
-  /** Digits only, e.g. "323" or "123,000". */
-  value: string;
-  /** "BCE"/"CE" in English, "MÖ"/"MS" in Turkish. Empty for unambiguous CE years. */
-  marker: string;
-  /** Turkish writes the marker before the number ("MÖ 323"). */
-  markerFirst: boolean;
-};
+import type { Lang, MessageKey } from "./i18n";
 
 /**
- * Negative years are BCE (the data has no year zero: -1 is 1 BCE).
- * The CE marker is only shown for years below 1000, where "300" alone would be ambiguous.
+ * Era boundaries follow each language's own convention: Turkish schools date the Middle Ages
+ * from 476 to 1453 and the "Yakın Çağ" from the French Revolution.
  */
-export function yearParts(year: number, lang: Lang, labels: { bce: string; ce: string }): YearParts {
-  const abs = Math.abs(year);
-  // Group digits only for very old dates ("123,000"), never for ordinary years ("1492").
-  const value = abs >= 10_000 ? abs.toLocaleString(lang === "tr" ? "tr-TR" : "en-US") : String(abs);
-  const marker = year < 0 ? labels.bce : year < 1000 ? labels.ce : "";
-  return { value, marker, markerFirst: lang === "tr" };
+export const ERAS: Record<Lang, readonly { from: number; key: MessageKey }[]> = {
+  en: [
+    { from: Number.NEGATIVE_INFINITY, key: "era.ancient" },
+    { from: 500, key: "era.medieval" },
+    { from: 1500, key: "era.earlyModern" },
+    { from: 1800, key: "era.modern" },
+    { from: 1946, key: "era.contemporary" },
+  ],
+  tr: [
+    { from: Number.NEGATIVE_INFINITY, key: "era.ancient" },
+    { from: 476, key: "era.medieval" },
+    { from: 1453, key: "era.earlyModern" },
+    { from: 1789, key: "era.modern" },
+    { from: 1946, key: "era.contemporary" },
+  ],
+};
+
+export function eraOf(year: number, lang: Lang): MessageKey {
+  let key: MessageKey = "era.ancient";
+  for (const era of ERAS[lang]) if (year >= era.from) key = era.key;
+  return key;
 }
 
-export function formatYear(year: number, lang: Lang, labels: { bce: string; ce: string }): string {
-  const { value, marker, markerFirst } = yearParts(year, lang, labels);
-  if (!marker) return value;
-  return markerFirst ? `${marker} ${value}` : `${value} ${marker}`;
+export function clampYear(year: number, start: number, end: number): number {
+  return Math.min(end, Math.max(start, Math.round(year)));
 }
 
-/** Index of the year in `years` (sorted ascending) closest to `target`; ties go to the earlier one. */
-export function nearestIndex(years: readonly number[], target: number): number {
-  let best = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  years.forEach((y, i) => {
-    const d = Math.abs(y - target);
-    if (d < bestDistance) {
-      best = i;
-      bestDistance = d;
-    }
-  });
-  return best;
+/** "1300–1923", or several spans joined: "395–1226, 1279–1453". */
+export function formatSpans(spans: readonly (readonly [number, number])[], end: number, now: string): string {
+  return spans.map(([f, t]) => (f === t ? `${f}` : `${f}–${t >= end ? now : t}`)).join(", ");
+}
+
+/** The nearest year in a sorted list strictly before / after `year`, if any. */
+export function previousIn(years: readonly number[], year: number): number | undefined {
+  let found: number | undefined;
+  for (const y of years) {
+    if (y >= year) break;
+    found = y;
+  }
+  return found;
+}
+
+export function nextIn(years: readonly number[], year: number): number | undefined {
+  return years.find((y) => y > year);
 }

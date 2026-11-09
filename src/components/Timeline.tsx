@@ -1,95 +1,98 @@
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Gauge, Pause, Play } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { CSSProperties } from "react";
-import type { Snapshot } from "../data/atlas";
-import { lang, t } from "../lib/i18n";
-import { ERAS, eraOf, formatYear } from "../lib/years";
-import { YearLabel } from "./YearLabel";
+import { type CSSProperties, useState } from "react";
+import { useLang, useT } from "../lib/i18n";
+import { clampYear, ERAS, eraOf } from "../lib/years";
 
 type Props = {
-  snapshots: Snapshot[];
-  index: number;
+  start: number;
+  end: number;
+  year: number;
+  /** Years with border changes, ascending. */
+  changes: readonly number[];
   playing: boolean;
-  onChange: (index: number) => void;
+  /** Playback speed in years per second. */
+  speed: number;
+  onYear: (year: number) => void;
   onTogglePlay: () => void;
+  onCycleSpeed: () => void;
+  onPreviousChange: () => void;
+  onNextChange: () => void;
 };
 
-/** Thumb radius in px; tick positions are inset by it so they line up with the thumb's centre. */
+/** Thumb radius in px; positions are inset by it so they line up with the thumb's centre. */
 const THUMB_R = 9;
-
-/** Horizontal position of snapshot `i` along the track, as a CSS length. */
-function at(i: number, count: number): string {
-  const f = count > 1 ? i / (count - 1) : 0;
-  return `calc(${THUMB_R}px + (100% - ${THUMB_R * 2}px) * ${f})`;
-}
+const BUCKET_YEARS = 25;
+const TICKS = [0, 500, 1000, 1500, 2000];
 
 const ERA_TINT: Record<string, string> = {
-  prehistory: "bg-stone-400/25",
-  ancient: "bg-amber-300/25",
-  medieval: "bg-rose-300/25",
-  earlyModern: "bg-sky-300/25",
-  modern: "bg-emerald-300/25",
+  "era.ancient": "bg-amber-300/30",
+  "era.medieval": "bg-rose-300/30",
+  "era.earlyModern": "bg-sky-300/30",
+  "era.modern": "bg-emerald-300/30",
+  "era.contemporary": "bg-violet-300/30",
 };
 
-export function Timeline({ snapshots, index, playing, onChange, onTogglePlay }: Props) {
+export function Timeline(props: Props) {
+  const { start, end, year, changes, playing, speed } = props;
+  const t = useT();
+  const lang = useLang();
   const reduceMotion = useReducedMotion();
-  const current = snapshots[index];
-  if (!current) return null;
-  const count = snapshots.length;
-  const labels = { bce: t("bce"), ce: t("ce") };
+  const span = end - start;
+  const fraction = (y: number) => (y - start) / span;
+  const at = (y: number) => `calc(${THUMB_R}px + (100% - ${THUMB_R * 2}px) * ${fraction(y)})`;
 
-  // Each era covers a run of consecutive snapshots.
-  const bands = ERAS.map((era) => {
-    const members = snapshots.flatMap((s, i) => (eraOf(s.year) === era.id ? [i] : []));
-    return { id: era.id, first: members[0], last: members.at(-1) };
-  }).filter(
-    (b): b is { id: (typeof ERAS)[number]["id"]; first: number; last: number } => b.first !== undefined,
-  );
+  // How many borders change in each 25-year bucket: a quiet sparkline of history's busy times.
+  const buckets = new Array<number>(Math.ceil((span + 1) / BUCKET_YEARS)).fill(0);
+  for (const y of changes) {
+    const i = Math.floor((y - start) / BUCKET_YEARS);
+    buckets[i] = (buckets[i] ?? 0) + 1;
+  }
+  const busiest = Math.max(1, ...buckets);
+
+  const eras = ERAS[lang]
+    .map((era, i, all) => ({
+      key: era.key,
+      from: Math.max(start, era.from),
+      to: Math.min(end, (all[i + 1]?.from ?? end + 1) - 1),
+    }))
+    .filter((e) => e.from <= e.to);
 
   return (
     <section
       aria-label={t("timeline")}
       className="pointer-events-auto w-full max-w-4xl rounded-3xl border border-white/10 bg-panel p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:px-6 sm:pt-5 sm:pb-4"
     >
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium text-[11px] text-gold/80 uppercase tracking-[0.22em]">
-            {t(`era.${eraOf(current.year)}`)}
+            {t(eraOf(year, lang))}
           </p>
-          <div className="relative mt-1 h-10 overflow-hidden sm:h-12" aria-live="polite">
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.div
-                key={current.year}
-                className="font-display font-semibold text-4xl text-ink tabular-nums leading-none sm:text-5xl"
-                initial={reduceMotion ? false : { y: 28, opacity: 0, filter: "blur(6px)" }}
-                animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
-                exit={reduceMotion ? undefined : { y: -28, opacity: 0, filter: "blur(6px)" }}
-                transition={{ type: "spring", stiffness: 420, damping: 36 }}
-              >
-                <YearLabel
-                  year={current.year}
-                  markerClassName="font-sans font-medium text-base text-ink/60 sm:text-lg"
-                />
-              </motion.div>
-            </AnimatePresence>
-          </div>
+          <YearInput
+            year={year}
+            start={start}
+            end={end}
+            onYear={props.onYear}
+            label={t("editYear")}
+            animate={!reduceMotion && !playing}
+          />
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
           <button
             type="button"
             className="icon-button"
-            onClick={() => onChange(Math.max(0, index - 1))}
-            disabled={index === 0}
-            aria-label={t("previous")}
-            title={t("previous")}
+            onClick={props.onPreviousChange}
+            disabled={year <= (changes[0] ?? start)}
+            aria-label={t("previousChange")}
+            title={`${t("previousChange")} (PgUp)`}
           >
-            <SkipBack size={18} />
+            <ChevronsLeft size={20} />
           </button>
           <button
             type="button"
             className="grid size-12 place-items-center rounded-full bg-gold text-space shadow-gold/20 shadow-lg transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-gold focus-visible:outline-offset-2 active:scale-95"
-            onClick={onTogglePlay}
+            onClick={props.onTogglePlay}
             aria-label={playing ? t("pause") : t("play")}
             title={`${playing ? t("pause") : t("play")} (Space)`}
           >
@@ -102,70 +105,161 @@ export function Timeline({ snapshots, index, playing, onChange, onTogglePlay }: 
           <button
             type="button"
             className="icon-button"
-            onClick={() => onChange(Math.min(count - 1, index + 1))}
-            disabled={index === count - 1}
-            aria-label={t("next")}
-            title={t("next")}
+            onClick={props.onNextChange}
+            disabled={year >= (changes.at(-1) ?? end)}
+            aria-label={t("nextChange")}
+            title={`${t("nextChange")} (PgDn)`}
           >
-            <SkipForward size={18} />
+            <ChevronsRight size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={props.onCycleSpeed}
+            className="ml-1 hidden h-9 items-center gap-1.5 rounded-full border border-white/10 px-3 text-ink/70 text-xs tabular-nums transition hover:bg-white/5 hover:text-ink sm:flex"
+            aria-label={`${t("speed")}: ${speed} ${t("yearsPerSecond")}`}
+            title={t("speed")}
+          >
+            <Gauge size={14} />
+            {speed} {t("yearsPerSecond")}
           </button>
         </div>
       </div>
 
-      <div className="relative mt-4 select-none">
-        {/* Snapshot ticks */}
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-0">
-          {snapshots.map((s, i) => (
+      {/* Border-change density */}
+      <div
+        aria-hidden
+        className="mt-3 flex h-6 items-end gap-px"
+        style={{ marginInline: THUMB_R }}
+        title={t("bordersChanging")}
+      >
+        {buckets.map((count, i) => {
+          const bucketStart = start + i * BUCKET_YEARS;
+          return (
             <span
-              key={s.id}
-              className={`-translate-x-1/2 -translate-y-1/2 absolute h-2.5 w-px ${i <= index ? "bg-gold/70" : "bg-white/20"}`}
-              style={{ left: at(i, count) }}
+              // biome-ignore lint/suspicious/noArrayIndexKey: buckets are fixed positions on the axis
+              key={i}
+              className={`flex-1 rounded-t-[1px] ${bucketStart <= year ? "bg-gold/55" : "bg-white/15"}`}
+              style={{ height: count ? `${Math.max(12, Math.sqrt(count / busiest) * 100)}%` : "2px" }}
             />
-          ))}
-        </div>
-        <input
-          type="range"
-          className="timeline-range relative w-full"
-          min={0}
-          max={count - 1}
-          step={1}
-          value={index}
-          onChange={(e) => onChange(Number(e.target.value))}
-          aria-label={t("timeline")}
-          aria-valuetext={formatYear(current.year, lang, labels)}
-          style={{ "--progress": at(index, count) } as CSSProperties}
-        />
+          );
+        })}
       </div>
 
-      {/* Era bands */}
-      <div aria-hidden className="relative mt-2 h-5">
-        {bands.map((band) => {
-          const half = count > 1 ? 0.5 / (count - 1) : 0;
-          const from = Math.max(0, band.first / (count - 1) - half);
-          const to = Math.min(1, band.last / (count - 1) + half);
-          const isCurrent = eraOf(current.year) === band.id;
+      <input
+        type="range"
+        className="timeline-range relative -mt-1 w-full"
+        min={start}
+        max={end}
+        step={1}
+        value={year}
+        onChange={(e) => props.onYear(Number(e.target.value))}
+        aria-label={t("timeline")}
+        style={{ "--progress": at(year) } as CSSProperties}
+      />
+
+      {/* Eras and century marks */}
+      <div aria-hidden className="relative mt-1 h-5 text-[11px]">
+        {eras.map((era, i) => {
+          const isCurrent = eraOf(year, lang) === era.key;
+          // Recent eras are short on a 2,000-year axis: name them only while they are on screen.
+          const narrow = (era.to - era.from + 1) / span < 0.1;
+          const last = i === eras.length - 1;
           return (
             <div
-              key={band.id}
-              className="absolute top-0 flex h-full items-center justify-center px-1"
+              key={era.key}
+              className={`absolute top-0 flex h-full items-center px-1 ${last ? "justify-end" : "justify-center"}`}
               style={{
-                left: `calc(${THUMB_R}px + (100% - ${THUMB_R * 2}px) * ${from})`,
-                width: `calc((100% - ${THUMB_R * 2}px) * ${to - from})`,
+                left: at(era.from),
+                width: `calc((100% - ${THUMB_R * 2}px) * ${(era.to - era.from + 1) / span})`,
               }}
             >
-              <div className={`absolute inset-x-px top-0 h-0.5 rounded-full ${ERA_TINT[band.id]}`} />
-              <span
-                // Labels may spill a little past narrow bands (prehistory); neighbours are centred, so they don't collide.
-                className={`hidden whitespace-nowrap text-[11px] transition-colors sm:block ${
-                  isCurrent ? "text-ink/80" : "text-ink/35"
-                }`}
-              >
-                {t(`era.${band.id}`)}
-              </span>
+              <div
+                className={`absolute inset-x-px top-0 h-0.5 rounded-full ${ERA_TINT[era.key] ?? "bg-white/20"}`}
+              />
+              {(!narrow || isCurrent) && (
+                <span
+                  className={`hidden whitespace-nowrap transition-colors sm:block ${isCurrent ? "text-ink/85" : "text-ink/35"}`}
+                >
+                  {t(era.key)}
+                </span>
+              )}
             </div>
           );
         })}
       </div>
+      <div aria-hidden className="relative mt-0.5 h-4 text-[10px] text-ink/40 tabular-nums">
+        {TICKS.filter((y) => y >= start && y <= end).map((y) => (
+          <span key={y} className="-translate-x-1/2 absolute" style={{ left: at(y) }}>
+            {y}
+          </span>
+        ))}
+      </div>
     </section>
+  );
+}
+
+/** The big year, which turns into a text field when clicked so any year can be typed in. */
+function YearInput(props: {
+  year: number;
+  start: number;
+  end: number;
+  label: string;
+  animate: boolean;
+  onYear: (year: number) => void;
+}) {
+  const { year, start, end, label, animate, onYear } = props;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const big = "font-display font-semibold text-4xl text-ink tabular-nums leading-none sm:text-5xl";
+
+  if (editing) {
+    const commit = () => {
+      const value = Number.parseInt(draft, 10);
+      if (Number.isFinite(value)) onYear(clampYear(value, start, end));
+      setEditing(false);
+    };
+    return (
+      <input
+        // biome-ignore lint/a11y/noAutofocus: the field appears because the user asked to type a year
+        autoFocus
+        inputMode="numeric"
+        aria-label={label}
+        className={`${big} mt-1 h-10 w-36 rounded-lg bg-white/5 px-2 outline-none ring-1 ring-gold/60 sm:h-12`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, "").slice(0, 4))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+          e.stopPropagation();
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="group relative mt-1 block h-10 overflow-hidden rounded-lg text-left sm:h-12"
+      onClick={() => {
+        setDraft(String(year));
+        setEditing(true);
+      }}
+      title={label}
+      aria-label={`${year}. ${label}`}
+    >
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={animate ? year : "static"}
+          className={`${big} block group-hover:text-gold`}
+          initial={animate ? { y: 24, opacity: 0, filter: "blur(5px)" } : false}
+          animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+          exit={animate ? { y: -24, opacity: 0, filter: "blur(5px)" } : undefined}
+          transition={{ type: "spring", stiffness: 480, damping: 38 }}
+        >
+          {year}
+        </motion.span>
+      </AnimatePresence>
+    </button>
   );
 }

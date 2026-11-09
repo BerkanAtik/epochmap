@@ -1,35 +1,80 @@
 import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
-import { polityColor } from "../lib/colors";
-import type { SearchEntry } from "../lib/search";
+import { feature } from "topojson-client";
+import type { GeometryCollection, Topology } from "topojson-specification";
+import { paletteColor } from "../lib/colors";
 
-export type Snapshot = { id: string; year: number; count: number };
+/** A span of years whose shapes are stored in one file. */
+export type Window = { id: string; from: number; to: number };
 
 export type AtlasIndex = {
-  source: { repo: string; commit: string; license: string };
-  snapshots: Snapshot[];
+  start: number;
+  end: number;
+  eras: { cshapes: number; modern: number };
+  windows: Window[];
+  /** Years in which any border changes, ascending. */
+  changes: number[];
 };
 
-export type PolityProps = {
-  name: string;
-  subject?: string;
-  partOf?: string;
-  /** 1 approximate, 2 moderately precise, 3 set by international law. */
-  precision?: number;
-  wiki?: string;
-  /** km² */
-  area: number;
-  /** Added on load: fill colour for the map. */
+export type BorderProps = {
+  /** Polity identity (a Wikidata id when known). */
+  id: string;
+  /** Empire or sovereign it belongs to. */
+  g?: string;
+  /** First and last year (inclusive) of this shape. */
+  f: number;
+  t: number;
+  /** Area in km². */
+  a: number;
+  /** Palette index chosen by the data build. */
+  c: number;
+  /** Added on load. */
   color: string;
 };
 
-export type LabelProps = { name: string; area: number };
+export type LabelProps = {
+  id: string;
+  f: number;
+  t: number;
+  a: number;
+  en: string;
+  tr: string;
+  /** Upper-case names, added on load. */
+  enu?: string;
+  tru?: string;
+};
 
-export type Borders = FeatureCollection<Polygon | MultiPolygon, PolityProps>;
+export type DisputeProps = {
+  id: string;
+  f: number;
+  t: number;
+  en: string;
+  tr: string;
+  note_en: string;
+  note_tr: string;
+  lx: number;
+  ly: number;
+};
+
+export type Polity = {
+  id: string;
+  /** Names in order of first use. */
+  en: string[];
+  tr: string[];
+  spans: [number, number][];
+  wiki: { en?: string; tr?: string };
+};
+
+export type PolityIndex = {
+  polities: Polity[];
+  groups: Record<string, { en: string; tr: string }>;
+};
+
+export type Borders = FeatureCollection<Polygon | MultiPolygon, BorderProps>;
 export type Labels = FeatureCollection<Point, LabelProps>;
+export type Disputes = FeatureCollection<Polygon | MultiPolygon, DisputeProps>;
+export type WindowData = { window: Window; borders: Borders; labels: Labels };
 
-export type SnapshotData = { snapshot: Snapshot; borders: Borders; labels: Labels };
-
-/** Absolute URL for a file in public/, honouring Vite's relative `base`. */
+/** Absolute URL for a file in public/data, honouring Vite's relative `base`. */
 export function dataUrl(path: string): string {
   return new URL(`${import.meta.env.BASE_URL}data/${path}`, document.baseURI).href;
 }
@@ -51,25 +96,44 @@ function getJson<T>(path: string): Promise<T> {
 }
 
 export const loadIndex = () => getJson<AtlasIndex>("index.json");
-export const loadSearchIndex = () => getJson<SearchEntry[]>("search.json");
+export const loadPolities = () => getJson<PolityIndex>("polities.json");
+export const loadDisputes = () => getJson<Disputes>("disputes.json");
 
-const colored = new WeakSet<Borders>();
+const windows = new Map<string, Promise<WindowData>>();
 
-export async function loadSnapshot(snapshot: Snapshot): Promise<SnapshotData> {
-  const [borders, labels] = await Promise.all([
-    getJson<Borders>(`borders/${snapshot.id}.json`),
-    getJson<Labels>(`labels/${snapshot.id}.json`),
-  ]);
-  // Colours are derived here rather than stored, so palette tweaks don't require rebuilding the data.
-  if (!colored.has(borders)) {
-    for (const f of borders.features)
-      f.properties.color = polityColor(f.properties.name, f.properties.subject);
-    colored.add(borders);
+/** Loads one time window: borders (TopoJSON, decoded here) and label points. */
+export function loadWindow(window: Window): Promise<WindowData> {
+  let request = windows.get(window.id);
+  if (!request) {
+    request = Promise.all([
+      getJson<Topology>(`borders/${window.id}.json`),
+      getJson<Labels>(`labels/${window.id}.json`),
+    ]).then(([topology, labels]) => {
+      const [object] = Object.values(topology.objects) as GeometryCollection<BorderProps>[];
+      const borders = (
+        object ? feature(topology, object) : { type: "FeatureCollection", features: [] }
+      ) as Borders;
+      for (const f of borders.features) f.properties.color = paletteColor(f.properties.c);
+      // Capitals for the small-caps labels of large polities, with each language's own rules
+      // (Turkish upper-cases "i" to "İ").
+      for (const l of labels.features) {
+        l.properties.enu = l.properties.en.toLocaleUpperCase("en");
+        l.properties.tru = l.properties.tr.toLocaleUpperCase("tr");
+      }
+      return { window, borders, labels };
+    });
+    request.catch(() => windows.delete(window.id));
+    windows.set(window.id, request);
   }
-  return { snapshot, borders, labels };
+  return request;
 }
 
-/** Warms the cache for neighbouring snapshots so stepping and playback feel instant. */
-export function prefetchSnapshot(snapshot: Snapshot | undefined): void {
-  if (snapshot) void loadSnapshot(snapshot).catch(() => {});
+export function windowFor(index: AtlasIndex, year: number): Window | undefined {
+  return index.windows.find((w) => w.from <= year && year <= w.to);
+}
+
+/** Warms the cache for the windows around a year so scrubbing and playback feel instant. */
+export function prefetchAround(index: AtlasIndex, window: Window): void {
+  const i = index.windows.indexOf(window);
+  for (const w of [index.windows[i + 1], index.windows[i - 1]]) if (w) void loadWindow(w).catch(() => {});
 }

@@ -1,30 +1,43 @@
 import { CornerDownLeft, Search } from "lucide-react";
 import { useState } from "react";
-import { t } from "../lib/i18n";
-import { type SearchEntry, searchEntries } from "../lib/search";
+import type { Polity } from "../data/atlas";
+import { useLang, useT } from "../lib/i18n";
+import { searchPolities } from "../lib/search";
+import { formatSpans } from "../lib/years";
 import { Dialog } from "./Dialog";
-import { YearLabel } from "./YearLabel";
 
 type Props = {
   open: boolean;
-  entries: SearchEntry[];
+  polities: Polity[];
+  end: number;
   onClose: () => void;
-  onPick: (entry: SearchEntry) => void;
+  onPick: (polity: Polity) => void;
 };
 
-export function SearchPalette({ open, entries, onClose, onPick }: Props) {
+export function SearchPalette({ open, polities, end, onClose, onPick }: Props) {
+  const t = useT();
   return (
     <Dialog open={open} onClose={onClose} label={t("search")} className="mt-[12vh] mb-auto">
-      <SearchBody entries={entries} onPick={onPick} />
+      <SearchBody polities={polities} end={end} onPick={onPick} />
     </Dialog>
   );
 }
 
 /** Mounted only while the dialog is open, so every opening starts with an empty query. */
-function SearchBody({ entries, onPick }: { entries: SearchEntry[]; onPick: (entry: SearchEntry) => void }) {
+function SearchBody({
+  polities,
+  end,
+  onPick,
+}: {
+  polities: Polity[];
+  end: number;
+  onPick: (p: Polity) => void;
+}) {
+  const t = useT();
+  const lang = useLang();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const results = searchEntries(entries, query);
+  const results = searchPolities(polities, query);
 
   const move = (delta: number) => {
     if (results.length) setActive((i) => (i + delta + results.length) % results.length);
@@ -71,35 +84,29 @@ function SearchBody({ entries, onPick }: { entries: SearchEntry[]; onPick: (entr
           className="flex-1 overflow-y-auto p-2"
           aria-label={t("search")}
         >
-          {results.map((entry, i) => {
-            const first = entry.years[0] ?? 0;
-            const last = entry.years.at(-1) ?? first;
+          {results.map((polity, i) => {
+            const names = polity[lang];
+            const name = names.at(-1) ?? polity.en.at(-1) ?? polity.id;
+            const earlier = names.slice(0, -1).slice(-2);
             return (
               // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard selection is handled by the combobox input
               <div
-                key={entry.name}
+                key={polity.id}
                 id={`result-${i}`}
                 role="option"
                 tabIndex={-1}
                 aria-selected={i === active}
                 onMouseMove={() => setActive(i)}
-                onClick={() => onPick(entry)}
+                onClick={() => onPick(polity)}
                 className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 ${
                   i === active ? "bg-white/10" : ""
                 }`}
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-ink">{entry.name}</p>
-                  <p className="text-ink/50 text-xs">
-                    <YearLabel year={first} />
-                    {first !== last && (
-                      <>
-                        {" – "}
-                        <YearLabel year={last} />
-                      </>
-                    )}
-                    {" · "}
-                    {entry.years.length} {t("snapshots")}
+                  <p className="truncate font-medium text-ink">{name}</p>
+                  <p className="truncate text-ink/50 text-xs tabular-nums">
+                    {formatSpans(polity.spans, end, String(end))}
+                    {earlier.length > 0 && ` · ${earlier.join(", ")}`}
                   </p>
                 </div>
                 {i === active && <CornerDownLeft size={16} className="shrink-0 text-ink/40" />}

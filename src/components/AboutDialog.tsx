@@ -1,13 +1,24 @@
 import { X } from "lucide-react";
-import { t } from "../lib/i18n";
+import { useT } from "../lib/i18n";
 import { Dialog } from "./Dialog";
 import { GitHubIcon, REPO_URL } from "./Logo";
 
 const isMac = /mac|iphone|ipad/i.test(globalThis.navigator?.userAgent ?? "");
 
+const SOURCES = [
+  { key: "dataCliopatria", href: "https://github.com/Seshat-Global-History-Databank/cliopatria" },
+  { key: "dataCShapes", href: "https://icr.ethz.ch/data/cshapes/" },
+  { key: "dataNaturalEarth", href: "https://www.naturalearthdata.com/" },
+  { key: "dataImagery", href: "https://earthdata.nasa.gov/gibs" },
+  { key: "dataWiki", href: "https://www.wikidata.org/" },
+] as const;
+
 export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const shortcuts: [string, string][] = [
     ["← →", t("shortcut.step")],
+    ["Shift + ← →", t("shortcut.stepTen")],
+    ["PgUp PgDn", t("shortcut.change")],
     ["Space", t("shortcut.play")],
     [isMac ? "⌘ K" : "Ctrl K", t("shortcut.search")],
     ["Esc", t("shortcut.close")],
@@ -43,26 +54,13 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
 
         <h3 className="mt-7 text-ink/55 text-xs uppercase tracking-[0.16em]">{t("dataTitle")}</h3>
         <ul className="mt-2 space-y-1.5 text-ink/75 text-sm">
-          <li>
-            <a
-              className="link"
-              href="https://github.com/aourednik/historical-basemaps"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t("dataBorders")}
-            </a>
-          </li>
-          <li>
-            <a className="link" href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">
-              {t("dataLand")}
-            </a>
-          </li>
-          <li>
-            <a className="link" href="https://www.wikipedia.org/" target="_blank" rel="noreferrer">
-              {t("dataWiki")}
-            </a>
-          </li>
+          {SOURCES.map((s) => (
+            <li key={s.key}>
+              <a className="link" href={s.href} target="_blank" rel="noreferrer">
+                {t(s.key)}
+              </a>
+            </li>
+          ))}
         </ul>
 
         <a

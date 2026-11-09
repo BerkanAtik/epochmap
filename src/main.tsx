@@ -5,9 +5,9 @@ import "./index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { lang } from "./lib/i18n";
+import { getLang } from "./lib/i18n";
 
-document.documentElement.lang = lang;
+document.documentElement.lang = getLang();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root element missing");

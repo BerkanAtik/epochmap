@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { polityColor } from "./colors";
+import { hash, PALETTE, paletteColor } from "./colors";
 
-describe("polityColor", () => {
-  it("is stable for the same polity", () => {
-    expect(polityColor("Ottoman Empire", undefined)).toBe(polityColor("Ottoman Empire", "Ottoman Empire"));
+describe("paletteColor", () => {
+  it("returns a CSS colour for any index, wrapping around the palette", () => {
+    expect(paletteColor(0)).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+    expect(paletteColor(PALETTE.length)).toBe(paletteColor(0));
+    expect(paletteColor(-1)).toBe(paletteColor(1));
   });
+});
 
-  it("gives subjects their ruler's hue, but lighter", () => {
-    const ruler = polityColor("Spain", "Spain");
-    const colony = polityColor("New Spain", "Spain");
-    const hue = (c: string) => c.slice(0, c.lastIndexOf(","));
-    expect(hue(colony)).toBe(hue(ruler));
-    expect(colony).not.toBe(ruler);
+describe("hash", () => {
+  it("is stable, so unconstrained polities keep their colour between builds", () => {
+    expect(hash("Q12560")).toBe(hash("Q12560"));
+    expect(hash("Q12560")).not.toBe(hash("Q2277"));
   });
 });

@@ -1,5 +1,0 @@
-{"type":"FeatureCollection", "features": [
-{"type":"Feature","geometry":{"type":"Point","coordinates":[26.52,22.75]},"properties":{"name":"Homo heidelbergensis","area":15912568}},
-{"type":"Feature","geometry":{"type":"Point","coordinates":[44.74,35.09]},"properties":{"name":"Neanderthal","area":7353964}},
-{"type":"Feature","geometry":{"type":"Point","coordinates":[100.32,21.7]},"properties":{"name":"Homo erectus","area":12164346}}
-]}

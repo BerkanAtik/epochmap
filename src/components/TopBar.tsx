@@ -1,5 +1,5 @@
 import { Info, Link2, Search } from "lucide-react";
-import { t } from "../lib/i18n";
+import { LANGS, setLang, useLang, useT } from "../lib/i18n";
 import { GitHubIcon, Logo, REPO_URL } from "./Logo";
 
 const isMac = /mac|iphone|ipad/i.test(globalThis.navigator?.userAgent ?? "");
@@ -11,6 +11,8 @@ type Props = {
 };
 
 export function TopBar({ onSearch, onShare, onAbout }: Props) {
+  const t = useT();
+  const lang = useLang();
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3 sm:p-5">
       <div className="pointer-events-auto flex items-center gap-3">
@@ -27,7 +29,7 @@ export function TopBar({ onSearch, onShare, onAbout }: Props) {
         <button
           type="button"
           onClick={onSearch}
-          className="flex h-10 items-center gap-2 rounded-full border border-white/10 bg-panel px-3.5 text-ink/75 text-sm shadow-black/30 shadow-lg backdrop-blur-xl transition hover:text-ink sm:min-w-56"
+          className="glass flex h-10 items-center gap-2 rounded-full px-3.5 text-ink/75 text-sm transition hover:text-ink sm:min-w-56"
           aria-label={t("search")}
         >
           <Search size={16} />
@@ -36,9 +38,28 @@ export function TopBar({ onSearch, onShare, onAbout }: Props) {
             {isMac ? "⌘K" : "Ctrl K"}
           </kbd>
         </button>
+
+        {/* Language switch */}
+        <fieldset className="glass flex h-10 items-center rounded-full p-1" aria-label={t("language")}>
+          {LANGS.map((l) => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => setLang(l)}
+              aria-pressed={lang === l}
+              className={`h-8 rounded-full px-2.5 font-medium text-xs uppercase tracking-wide transition ${
+                lang === l ? "bg-gold text-space" : "text-ink/60 hover:text-ink"
+              }`}
+              lang={l}
+            >
+              {l}
+            </button>
+          ))}
+        </fieldset>
+
         <button
           type="button"
-          className="icon-button glass"
+          className="icon-button glass hidden sm:grid"
           onClick={onShare}
           aria-label={t("share")}
           title={t("share")}
@@ -55,7 +76,7 @@ export function TopBar({ onSearch, onShare, onAbout }: Props) {
           <Info size={17} />
         </button>
         <a
-          className="icon-button glass hidden sm:grid"
+          className="icon-button glass hidden lg:grid"
           href={REPO_URL}
           target="_blank"
           rel="noreferrer"

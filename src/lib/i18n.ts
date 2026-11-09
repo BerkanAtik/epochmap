@@ -1,63 +1,108 @@
-export type Lang = "en" | "tr";
+import { useMemo, useSyncExternalStore } from "react";
 
-/** UI language: `?lang=` wins, then the browser language. Defaults to English. */
+export type Lang = "en" | "tr";
+export const LANGS: readonly Lang[] = ["en", "tr"];
+
+const STORAGE_KEY = "epochmap.lang";
+
+/** `?lang=` wins, then the last choice, then the browser language. Defaults to English. */
 function detectLang(): Lang {
-  const fromUrl = new URLSearchParams(globalThis.location?.search ?? "").get("lang");
-  if (fromUrl === "tr" || fromUrl === "en") return fromUrl;
-  return globalThis.navigator?.language?.toLowerCase().startsWith("tr") ? "tr" : "en";
+  if (typeof window === "undefined") return "en";
+  const fromUrl = new URLSearchParams(window.location.search).get("lang");
+  if (fromUrl === "en" || fromUrl === "tr") return fromUrl;
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved === "en" || saved === "tr") return saved;
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies); detection still works.
+  }
+  return window.navigator.language?.toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 
-export const lang: Lang = detectLang();
+let current: Lang = detectLang();
+const listeners = new Set<() => void>();
+
+export function getLang(): Lang {
+  return current;
+}
+
+export function setLang(lang: Lang): void {
+  if (lang === current) return;
+  current = lang;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, lang);
+  } catch {
+    // Not remembering the choice is fine.
+  }
+  document.documentElement.lang = lang;
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** The UI language; components using it re-render when it changes. */
+export function useLang(): Lang {
+  return useSyncExternalStore(subscribe, getLang, getLang);
+}
 
 const en = {
   tagline: "An atlas of world history",
   search: "Search",
-  searchPlaceholder: "Search empires, kingdoms, peoples…",
+  searchPlaceholder: "Search empires, kingdoms, countries…",
   searchHint: "Type a name, then press Enter",
   noResults: "No matches",
-  snapshots: "snapshots",
   play: "Play",
   pause: "Pause",
-  previous: "Previous period",
-  next: "Next period",
+  previousChange: "Previous border change",
+  nextChange: "Next border change",
+  speed: "Playback speed",
+  yearsPerSecond: "yrs/s",
   timeline: "Timeline",
-  bce: "BCE",
-  ce: "CE",
-  "era.prehistory": "Prehistory",
+  editYear: "Type a year",
+  bordersChanging: "Border changes over time",
   "era.ancient": "Antiquity",
   "era.medieval": "Middle Ages",
   "era.earlyModern": "Early modern",
   "era.modern": "Modern era",
+  "era.contemporary": "Contemporary",
   onTheMap: "On the map",
-  presence: "Presence across time",
-  notOnMapIn: "Not on the map in",
-  subjectOf: "Under the authority of",
   partOf: "Part of",
-  "precision.1": "Approximate borders",
-  "precision.2": "Moderately precise borders",
-  "precision.3": "Borders set by international law",
+  alsoKnownAs: "Also known as",
+  presence: "Across time",
+  notOnMapIn: "Not on the map in",
+  disputed: "Disputed territory",
   fromWikipedia: "From Wikipedia",
   readOnWikipedia: "Read on Wikipedia",
   noSummary: "No Wikipedia summary found for this name.",
   close: "Close",
   share: "Copy link to this view",
   linkCopied: "Link copied",
+  language: "Language",
   about: "About",
   aboutTitle: "About Epochmap",
   aboutBody:
-    "Epochmap lets you travel through 125,000 years of history on an interactive globe. Drag the timeline to watch empires, kingdoms and peoples rise and fall, and click any region to learn more.",
+    "Epochmap shows the political map of the world for every year from 1 CE to today on a 3D globe. Drag the timeline or press play to watch borders change, and click any country or empire to learn more.",
   shortcuts: "Keyboard shortcuts",
-  "shortcut.step": "Previous / next period",
+  "shortcut.step": "One year back / forward",
+  "shortcut.stepTen": "Ten years back / forward",
+  "shortcut.change": "Previous / next border change",
   "shortcut.play": "Play / pause",
   "shortcut.search": "Search",
-  "shortcut.close": "Close panel",
-  disclaimerTitle: "About the borders",
+  "shortcut.close": "Close the panel",
+  disclaimerTitle: "How accurate are the borders?",
   disclaimer:
-    "Borders are approximate and simplified for a world-scale map. Historical boundaries were often fluid, contested or simply unknown, and many regions are labelled by culture rather than by state.",
+    "Each period uses the best open dataset available for it. Borders are simplified for a world-scale map, and historical boundaries were often fluid or contested. From 1886 they follow internationally recognised (de jure) borders; from 2014 they show the situation on the ground, with disputed territories hatched.",
   dataTitle: "Data",
-  dataBorders: "Historical borders: historical-basemaps by André Ourednik and contributors (GPL-3.0)",
-  dataLand: "Land: Natural Earth (public domain)",
-  dataWiki: "Summaries: Wikipedia (CC BY-SA)",
+  dataCliopatria: "1–1885: Cliopatria, Seshat Global History Databank (CC BY 4.0)",
+  dataCShapes: "1886–2013: CShapes 2.0, ETH Zürich (CC BY-NC-SA 4.0)",
+  dataNaturalEarth: "2014–today, disputed areas, land: Natural Earth (public domain)",
+  dataImagery: "Satellite imagery: NASA Blue Marble via GIBS (public domain)",
+  dataWiki: "Names and summaries: Wikidata (CC0) and Wikipedia (CC BY-SA)",
   sourceCode: "Source code on GitHub",
   loading: "Loading…",
   webglError: "Your browser or device does not support WebGL 2, which Epochmap needs to draw the globe.",
@@ -70,52 +115,56 @@ export type MessageKey = keyof typeof en;
 const tr: Record<MessageKey, string> = {
   tagline: "Dünya tarihi atlası",
   search: "Ara",
-  searchPlaceholder: "İmparatorluk, krallık veya halk ara…",
+  searchPlaceholder: "İmparatorluk, krallık veya ülke ara…",
   searchHint: "Bir isim yazıp Enter'a basın",
   noResults: "Sonuç yok",
-  snapshots: "dönem",
   play: "Oynat",
   pause: "Duraklat",
-  previous: "Önceki dönem",
-  next: "Sonraki dönem",
+  previousChange: "Önceki sınır değişikliği",
+  nextChange: "Sonraki sınır değişikliği",
+  speed: "Oynatma hızı",
+  yearsPerSecond: "yıl/sn",
   timeline: "Zaman çizelgesi",
-  bce: "MÖ",
-  ce: "MS",
-  "era.prehistory": "Tarih öncesi",
+  editYear: "Bir yıl yazın",
+  bordersChanging: "Zaman içinde sınır değişiklikleri",
   "era.ancient": "İlk Çağ",
   "era.medieval": "Orta Çağ",
   "era.earlyModern": "Yeni Çağ",
   "era.modern": "Yakın Çağ",
+  "era.contemporary": "Çağdaş dönem",
   onTheMap: "Haritada",
-  presence: "Zaman içindeki varlığı",
-  notOnMapIn: "Bu dönemde haritada yok:",
-  subjectOf: "Bağlı olduğu güç",
-  partOf: "Parçası olduğu bölge",
-  "precision.1": "Yaklaşık sınırlar",
-  "precision.2": "Orta hassasiyette sınırlar",
-  "precision.3": "Uluslararası hukukla belirlenmiş sınırlar",
+  partOf: "Bağlı olduğu",
+  alsoKnownAs: "Diğer adları",
+  presence: "Zaman içinde",
+  notOnMapIn: "Bu yılda haritada yok:",
+  disputed: "Tartışmalı bölge",
   fromWikipedia: "Wikipedia'dan",
   readOnWikipedia: "Wikipedia'da oku",
   noSummary: "Bu isim için Wikipedia özeti bulunamadı.",
   close: "Kapat",
   share: "Bu görünümün bağlantısını kopyala",
   linkCopied: "Bağlantı kopyalandı",
+  language: "Dil",
   about: "Hakkında",
   aboutTitle: "Epochmap hakkında",
   aboutBody:
-    "Epochmap ile 125.000 yıllık tarihte etkileşimli bir küre üzerinde gezinebilirsiniz. Zaman çizelgesini sürükleyerek imparatorlukların, krallıkların ve halkların yükselişini ve çöküşünü izleyin, ayrıntı için herhangi bir bölgeye tıklayın.",
+    "Epochmap, MS 1 yılından bugüne her yılın siyasi dünya haritasını 3B bir küre üzerinde gösterir. Sınırların değişimini izlemek için zaman çizelgesini sürükleyin ya da oynatın; ayrıntı için herhangi bir ülkeye veya imparatorluğa tıklayın.",
   shortcuts: "Klavye kısayolları",
-  "shortcut.step": "Önceki / sonraki dönem",
+  "shortcut.step": "Bir yıl geri / ileri",
+  "shortcut.stepTen": "On yıl geri / ileri",
+  "shortcut.change": "Önceki / sonraki sınır değişikliği",
   "shortcut.play": "Oynat / duraklat",
   "shortcut.search": "Ara",
   "shortcut.close": "Paneli kapat",
-  disclaimerTitle: "Sınırlar hakkında",
+  disclaimerTitle: "Sınırlar ne kadar doğru?",
   disclaimer:
-    "Sınırlar dünya ölçeğindeki bir harita için yaklaşık ve sadeleştirilmiştir. Tarihî sınırlar çoğu zaman değişken, tartışmalı ya da bilinmezdi; birçok bölge bir devlet yerine kültür adıyla gösterilir.",
+    "Her dönem için o döneme ait en iyi açık veri seti kullanılır. Sınırlar dünya ölçeğinde bir harita için sadeleştirilmiştir ve tarihî sınırlar çoğu zaman değişken ya da tartışmalıydı. 1886'dan itibaren uluslararası hukukça tanınan (de jure) sınırlar, 2014'ten itibaren ise sahadaki durum gösterilir; tartışmalı bölgeler taralıdır.",
   dataTitle: "Veri",
-  dataBorders: "Tarihî sınırlar: André Ourednik ve katkıcıların historical-basemaps projesi (GPL-3.0)",
-  dataLand: "Kara parçaları: Natural Earth (kamu malı)",
-  dataWiki: "Özetler: Wikipedia (CC BY-SA)",
+  dataCliopatria: "1–1885: Cliopatria, Seshat Küresel Tarih Veri Bankası (CC BY 4.0)",
+  dataCShapes: "1886–2013: CShapes 2.0, ETH Zürih (CC BY-NC-SA 4.0)",
+  dataNaturalEarth: "2014–bugün, tartışmalı bölgeler, kara: Natural Earth (kamu malı)",
+  dataImagery: "Uydu görüntüsü: NASA Blue Marble, GIBS üzerinden (kamu malı)",
+  dataWiki: "Adlar ve özetler: Wikidata (CC0) ve Wikipedia (CC BY-SA)",
   sourceCode: "GitHub'da kaynak kodu",
   loading: "Yükleniyor…",
   webglError:
@@ -126,6 +175,12 @@ const tr: Record<MessageKey, string> = {
 
 const messages: Record<Lang, Record<MessageKey, string>> = { en, tr };
 
-export function t(key: MessageKey): string {
+export function translate(lang: Lang, key: MessageKey): string {
   return messages[lang][key];
+}
+
+/** A translator bound to the current language; its identity changes with the language. */
+export function useT(): (key: MessageKey) => string {
+  const lang = useLang();
+  return useMemo(() => (key: MessageKey) => messages[lang][key], [lang]);
 }

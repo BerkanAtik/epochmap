@@ -16,7 +16,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "data": "node --experimental-strip-types --no-warnings scripts/build-data.ts"
+    "data": "node --max-old-space-size=8192 --experimental-strip-types --no-warnings scripts/build-data.ts"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",
@@ -25,7 +25,8 @@
     "maplibre-gl": "^6.17.0",
     "motion": "^14.10.1",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "topojson-client": "^3.1.0"
   },
   "devDependencies": {
     "@babel/core": "^8.1.0",
@@ -39,9 +40,9 @@
     "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^6.2.1",
     "babel-plugin-react-compiler": "^1.0.0",
+    "fflate": "^0.8.3",
     "mapshaper": "^0.7.101",
     "tailwindcss": "^4.3.5",
-    "topojson-client": "^3.1.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
     "vitest": "^5.1.0",
