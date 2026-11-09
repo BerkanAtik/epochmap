@@ -136,7 +136,13 @@ export function PolityPanel(props: PolityPanelProps) {
       )}
 
       <Suspense fallback={<WikiSkeleton />}>
-        <WikiCard id={polity.id} titles={polity.wiki} name={polity.en.at(-1) ?? title} lang={lang} />
+        <WikiCard
+          id={polity.id}
+          titles={polity.wiki}
+          name={polity.en.at(-1) ?? title}
+          lang={lang}
+          note={polity.note?.[lang]}
+        />
       </Suspense>
     </Panel>
   );
@@ -159,10 +165,18 @@ export function DisputePanel({
   );
 }
 
-function WikiCard(props: { id: string; titles: Polity["wiki"]; name: string; lang: Lang }) {
+function WikiCard(props: {
+  id: string;
+  titles: Polity["wiki"];
+  name: string;
+  lang: Lang;
+  /** The project's own description, shown under the image instead of Wikipedia's summary. */
+  note: string | undefined;
+}) {
   const t = useT();
   const summary = use(wikiSummary(props.id, props.titles, props.name, props.lang));
-  if (!summary) return <p className="text-ink/50 text-sm">{t("noSummary")}</p>;
+  const note = props.note && <p className="text-ink/85 text-sm leading-relaxed">{props.note}</p>;
+  if (!summary) return note || <p className="text-ink/50 text-sm">{t("noSummary")}</p>;
 
   return (
     <article className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]">
@@ -176,12 +190,16 @@ function WikiCard(props: { id: string; titles: Polity["wiki"]; name: string; lan
         />
       )}
       <div className="p-4">
-        <p className="text-[11px] text-ink/50 uppercase tracking-[0.16em]">
-          {t("fromWikipedia")} · {summary.title}
-        </p>
-        <p className="mt-2 line-clamp-[9] text-ink/85 text-sm leading-relaxed" lang={summary.lang}>
-          {summary.extract}
-        </p>
+        {note || (
+          <>
+            <p className="text-[11px] text-ink/50 uppercase tracking-[0.16em]">
+              {t("fromWikipedia")} · {summary.title}
+            </p>
+            <p className="mt-2 line-clamp-[9] text-ink/85 text-sm leading-relaxed" lang={summary.lang}>
+              {summary.extract}
+            </p>
+          </>
+        )}
         <a
           href={summary.url}
           target="_blank"

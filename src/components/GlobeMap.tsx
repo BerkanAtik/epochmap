@@ -508,9 +508,10 @@ export function GlobeMap(props: Props) {
 
       // Disputed areas sit on top of the countries, so they win when both are under the cursor.
       const hitAt = (point: { x: number; y: number }): Selection | null => {
-        const [feature] = m.queryRenderedFeatures([point.x, point.y], {
-          layers: [DISPUTE_FILL, fillLayer(active.current)],
-        });
+        // Until a window's layers are added, querying them throws; skip the ones not there yet.
+        const layers = [DISPUTE_FILL, fillLayer(active.current)].filter((id) => m.getLayer(id));
+        if (layers.length === 0) return null;
+        const [feature] = m.queryRenderedFeatures([point.x, point.y], { layers });
         const id = feature?.properties?.id as string | undefined;
         if (!feature || !id) return null;
         return { kind: feature.layer.id === DISPUTE_FILL ? "dispute" : "polity", id };

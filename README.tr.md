@@ -70,11 +70,12 @@ Sınırlar dünya ölçeğindeki bir harita için yine de sadeleştirilmiş duru
 
 **Veri hattı** ([`scripts/build-data.ts`](scripts/build-data.ts)). Her kaynak sabitlenmiş bir sürümde indiriliyor. Üç dönem, her biri bir yıldan başka bir yıla kadar geçerli olan tek bir şekil listesinde birleştiriliyor. Ardından [mapshaper](https://github.com/mbloch/mapshaper) şu adımları uyguluyor:
 
-1. Tarihî şekilleri kıyı şeridine göre kesiyor.
-2. Ortak sınırları birebir aynı tutarak şekilleri sadeleştiriyor.
-3. Her şeklin içinde bir etiket noktası buluyor.
+1. Ortak sınırları birebir aynı tutarak şekilleri sadeleştiriyor.
+2. Şekilleri kimsenin tutmadığı kıyılara ve denize doğru büyütüyor; böylece kaynakların kaba kıyı çizgileri boşluk bırakmıyor. Bir adanın bir kısmını tek bir devlet tutuyorsa adanın tamamını ona veriyor.
+3. Tüm dönemleri tek bir Natural Earth 1:10m kıyı çizgisinden kesiyor. Okyanus katmanının kenarı da aynı çizgi olduğu için renkli alanlar, sınırlar ve su birebir buluşuyor.
+4. Her şeklin içinde bir etiket noktası buluyor.
 
-Adlar ve Türkçe karşılıkları Wikidata'dan, okyanuslar, denizler ve göller Natural Earth'ten geliyor. Yıllar boyutu birbirine yakın 19 zaman aralığına bölünüyor. Her aralık TopoJSON olarak saklanıyor, böylece komşular ve yıllar arasında ortak olan sınırlar bir kez yazılıyor. 2.000 yılın tamamı 23 MB tutuyor.
+Adlar ve Türkçe karşılıkları Wikidata'dan, okyanuslar, denizler ve göller Natural Earth'ten geliyor. Yıllar boyutu birbirine yakın 17 zaman aralığına bölünüyor. Her aralık TopoJSON olarak saklanıyor, böylece komşular ve yıllar arasında ortak olan sınırlar bir kez yazılıyor. 2.000 yılın tamamı 32 MB tutuyor.
 
 **Renkler.** Betik, topolojide hangi devletlerin ortak sınırı olduğunu ve kaç yıl birlikte var olduklarını hesaplıyor. Ardından bu grafı açgözlü yöntemle boyuyor: en çok komşusu olan devletler önce seçiyor, her biri boyanmış komşularının en az kullandığı rengi alıyor.
 
@@ -97,13 +98,13 @@ npm install
 npm run dev
 ```
 
-| Komut           | Ne yapar                                                                                                             |
-| --------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`   | Geliştirme sunucusunu başlatır                                                                                       |
-| `npm run build` | Tip kontrolü yapar ve statik siteyi `dist/` klasörüne derler                                                         |
-| `npm test`      | Birim testlerini çalıştırır                                                                                          |
-| `npm run check` | Lint ve biçim kontrolü (Biome)                                                                                       |
-| `npm run data`  | `public/data` klasörünü kaynaklardan yeniden üretir (yaklaşık bir dakika; veri kontrolleri için `-- report` ekleyin) |
+| Komut           | Ne yapar                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`   | Geliştirme sunucusunu başlatır                                                                                      |
+| `npm run build` | Tip kontrolü yapar ve statik siteyi `dist/` klasörüne derler                                                        |
+| `npm test`      | Birim testlerini çalıştırır                                                                                         |
+| `npm run check` | Lint ve biçim kontrolü (Biome)                                                                                      |
+| `npm run data`  | `public/data` klasörünü kaynaklardan yeniden üretir (yaklaşık on dakika; veri kontrolleri için `-- report` ekleyin) |
 
 ## Yol haritası
 

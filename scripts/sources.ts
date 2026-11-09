@@ -297,10 +297,13 @@ export const TURKISH_PATTERNS: [RegExp, string][] = [
 ];
 
 /**
- * Country names that changed during the Natural Earth era (2014–today). Natural Earth 5.1.2
- * predates some of them, so each entry gives the name used from `from` to `to` (inclusive).
+ * Names that override the sources' for a country (by Wikidata id) from `from` to `to`
+ * (inclusive), from 1886 on. Mostly renames after Natural Earth 5.1.2 was released.
+ * A name left out keeps the source's.
  */
-export const MODERN_RENAMES: { wikidata: string; from: number; to: number; en: string; tr?: string }[] = [
+export const RENAMES: { wikidata: string; from: number; to: number; en?: string; tr?: string }[] = [
+  // The south of Cyprus once the island was divided in July 1974, in Turkey's usage.
+  { wikidata: "Q229", from: 1974, to: 9999, tr: "Güney Kıbrıs Rum Yönetimi" },
   // The UN adopted "Türkiye" in June 2022.
   { wikidata: "Q43", from: 2022, to: 9999, en: "Türkiye" },
   // Became North Macedonia in February 2019 (Prespa agreement).
@@ -492,6 +495,47 @@ export const CSHAPES_NAMES: Record<string, [number, string][]> = {
 };
 
 /**
+ * States that CShapes leaves inside another country, drawn as countries of their own. For
+ * `from`–`to` (until CShapes ends in 2013; Natural Earth already has them) the country with
+ * Wikidata id `inside` loses the Natural Earth shape `ne` (its ADMIN name) to this state.
+ */
+export const CARVED_STATES: {
+  inside: string;
+  ne: string;
+  from: number;
+  to: number;
+  wikidata: string;
+  en: string;
+  tr: string;
+}[] = [
+  {
+    // The north since 20 July 1974.
+    inside: "Q229",
+    ne: "Northern Cyprus",
+    from: 1974,
+    to: 9999,
+    wikidata: "Q23681",
+    en: "Turkish Republic of Northern Cyprus",
+    tr: "Kuzey Kıbrıs Türk Cumhuriyeti",
+  },
+];
+
+/**
+ * Descriptions written for this project, shown in the info panel instead of Wikipedia's
+ * summary (the Wikipedia link and image stay). Used where a neutral wording matters.
+ */
+export const POLITY_NOTES: Record<string, { en: string; tr: string }> = {
+  Q23681: {
+    en: "The state of the Turkish Cypriots in the north of Cyprus. The north came under Turkish Cypriot administration after the military operation Turkey began on 20 July 1974. The Turkish Federated State of Cyprus was proclaimed there in 1975 and the Turkish Republic of Northern Cyprus on 15 November 1983. It is recognised by Turkey. Talks between the two communities on the island's future continue under UN auspices.",
+    tr: "Kıbrıs adasının kuzeyindeki Kıbrıs Türklerinin devleti. Kuzey, Türkiye'nin 20 Temmuz 1974'te başlattığı askerî harekâttan sonra Kıbrıs Türklerinin yönetimine geçti. Burada 1975'te Kıbrıs Türk Federe Devleti, 15 Kasım 1983'te Kuzey Kıbrıs Türk Cumhuriyeti ilan edildi. Türkiye tarafından tanınıyor. Adanın geleceği için iki toplum arasındaki görüşmeler BM gözetiminde sürüyor.",
+  },
+  Q229: {
+    en: "The state governed by the Greek Cypriots in the south of Cyprus. The Republic of Cyprus was founded in 1960 as the shared state of Greek and Turkish Cypriots; Turkish Cypriots have not taken part in its government since 1963. It is internationally recognised as the Republic of Cyprus and has been a member of the European Union since 2004. Turkey calls it the Greek Cypriot Administration of Southern Cyprus.",
+    tr: "Kıbrıs adasının güneyinde Kıbrıs Rumlarının yönettiği devlet. Kıbrıs Cumhuriyeti 1960'ta Kıbrıs Rumları ile Kıbrıs Türklerinin ortak devleti olarak kuruldu; Kıbrıs Türkleri 1963'ten beri hükûmette yer almıyor. Türkiye bu yönetimi Güney Kıbrıs Rum Yönetimi olarak adlandırıyor. Uluslararası alanda Kıbrıs Cumhuriyeti adıyla tanınıyor ve 2004'ten beri Avrupa Birliği üyesi.",
+  },
+};
+
+/**
  * Disputed territories drawn as a hatched overlay. `ne` is the Natural Earth NAME_EN in the
  * disputed-areas layer (plus SOVEREIGNT where a name appears twice). `from`/`to` limit the
  * years in which the dispute, in its current shape, is shown.
@@ -539,12 +583,6 @@ export const DISPUTES: { ne: string; sov?: string; from: number; to?: number; en
     to: 2023,
     en: "Self-governing from 1992 until 2023, when it returned to Azerbaijani control",
     tr: "1992'den 2023'te yeniden Azerbaycan kontrolüne geçene kadar kendi kendini yönetti",
-  },
-  {
-    ne: "Turkish Republic of Northern Cyprus",
-    from: 1974,
-    en: "Under Turkish Cypriot administration since 1974 (TRNC declared in 1983); recognised by Turkey; claimed by the Republic of Cyprus",
-    tr: "1974'ten beri Kıbrıs Türk yönetiminde (KKTC 1983'te ilan edildi); Türkiye tanıyor; Kıbrıs Cumhuriyeti hak iddia ediyor",
   },
   {
     ne: "Western Sahara",

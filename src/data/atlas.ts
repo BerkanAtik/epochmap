@@ -49,6 +49,8 @@ export type Polity = {
   tr: string[];
   spans: [number, number][];
   wiki: { en?: string; tr?: string };
+  /** Description written for this project, shown instead of Wikipedia's summary. */
+  note?: { en: string; tr: string };
 };
 
 export type PolityIndex = {

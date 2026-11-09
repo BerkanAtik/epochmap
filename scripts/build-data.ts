@@ -10,26 +10,29 @@
  *               dependencies. Period names and empire membership come from Cliopatria.
  * - 2014–2026   Natural Earth 1:10m countries, public domain (de facto, after Crimea's annexation).
  * - Disputed areas: Natural Earth, with notes written for this project.
- * - Land:       Natural Earth 1:50m via world-atlas, clips Cliopatria's coastlines.
+ * - Coastline:  Natural Earth 1:10m land, without the islets its countries leave out. One
+ *               simplified copy cuts every era's shapes and is the edge of the ocean layer,
+ *               so fills, borders and water meet exactly.
  * - Names:      Wikidata (CC0) for Turkish names and Wikipedia titles.
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unzipSync } from "fflate";
 import mapshaper from "mapshaper";
-import { feature } from "topojson-client";
-import type { GeometryCollection, Topology } from "topojson-specification";
+import { quantize } from "topojson-client";
+import type { Topology, Transform } from "topojson-specification";
 import { hash, PALETTE } from "../src/lib/colors.ts";
 import {
+  CARVED_STATES,
   CSHAPES_NAMES,
   DISPUTES,
-  MODERN_RENAMES,
   NAME_FIXES,
   type NameFix,
+  POLITY_NOTES,
+  RENAMES,
   TURKISH_NAMES,
   TURKISH_PATTERNS,
 } from "./sources.ts";
@@ -48,10 +51,39 @@ const GLEDITSCH_WARD = {
 };
 const NATURAL_EARTH = { repo: "nvkelso/natural-earth-vector", tag: "v5.1.2" };
 
-/** Simplification tolerance in metres per era. Lower is sharper but heavier. */
-const TOLERANCE = { ancient: 1500, cshapes: 800, modern: 600, disputes: 500 };
-/** Size budget per time window, in vertices before topology sharing. */
+/**
+ * Simplification tolerance in metres per era, and for the coastline and lakes shared by all
+ * eras. Lower is sharper but heavier.
+ */
+const TOLERANCE = { ancient: 1500, cshapes: 800, modern: 600, disputes: 500, coast: 700 };
+/**
+ * How far (metres) shapes grow over unclaimed land and the sea before being cut at the
+ * coastline. Sources draw their own, rougher coasts; this closes the slivers between those
+ * and the real coast. Neighbours split contested space by distance.
+ */
+const GROW = 5000;
+/**
+ * An island up to ISLAND_MAX km², of which one polity holds at least ISLAND_SHARE while no
+ * other holds any part at the time, is given to that polity whole: sources often cut islands
+ * roughly.
+ */
+const ISLAND_MAX = 10_000;
+const ISLAND_SHARE = 0.2;
+/**
+ * Size budget per time window: vertices of borders between polities, counting each shape
+ * once. The coastline is shared by every shape and costs about the same in every window.
+ */
 const WINDOW_BUDGET = 400_000;
+/**
+ * How far (degrees) a vertex may sit from a coastline segment and still count as lying on it:
+ * outputs are rounded to 0.0001°.
+ */
+const COAST_SNAP = 0.00015;
+/**
+ * Every TopoJSON file is rounded to one world grid of 0.001° (about 100 m, a third of a pixel
+ * at the closest zoom), so the borders and the ocean put a shared coast on the same points.
+ */
+const GRID: Transform = { scale: [0.001, 0.001], translate: [-180, -90] };
 
 const USER_AGENT = "EpochmapDataBuilder/1.0 (https://github.com/BerkanAtik/epochmap)";
 
@@ -93,18 +125,12 @@ async function download(url: string, file: string): Promise<Buffer> {
   return data;
 }
 
+/** Takes a file out of mapshaper's output, so a large one can be freed as soon as it is parsed. */
 function outputFile(out: Record<string, string>, name: string): string {
   const file = out[name];
   if (file === undefined) throw new Error(`mapshaper produced no ${name}`);
+  delete out[name];
   return file;
-}
-
-function countVertices(coords: unknown): number {
-  if (!Array.isArray(coords)) return 0;
-  if (typeof coords[0] === "number") return 1;
-  let n = 0;
-  for (const c of coords) n += countVertices(c);
-  return n;
 }
 
 function bboxOf(geometry: Geometry): BBox {
@@ -354,10 +380,108 @@ async function loadNaturalEarth(name: string): Promise<Collection<NeProps>> {
   return JSON.parse(buf.toString("utf8"));
 }
 
-function landGeoJson(): string {
-  const require = createRequire(import.meta.url);
-  const topo = require("world-atlas/land-50m.json") as Topology<{ land: GeometryCollection }>;
-  return JSON.stringify(feature(topo, topo.objects.land));
+/** A FeatureCollection of bare geometries (mapshaper works faster without the properties). */
+function geometriesOnly(geometries: Geometry[]): string {
+  return JSON.stringify({
+    type: "FeatureCollection",
+    features: geometries.map((geometry) => ({ type: "Feature", properties: {}, geometry })),
+  });
+}
+
+/** The rings of a polygon geometry. */
+function ringsOf(geometry: Geometry): number[][][] {
+  const polygons = (
+    geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+  ) as number[][][][];
+  return polygons.flat();
+}
+
+const positionKey = ([x, y]: number[]) => `${x},${y}`;
+/** The same key for a segment in either direction. */
+const segmentKey = (a: number[], b: number[]) => {
+  const ka = positionKey(a);
+  const kb = positionKey(b);
+  return ka < kb ? `${ka} ${kb}` : `${kb} ${ka}`;
+};
+
+/**
+ * The coastline: Natural Earth 1:10m land without its "minor islands", as GeoJSON. Natural
+ * Earth's countries leave those islets out, so they would show as unfilled specks; under the
+ * ocean they stay as faint as they were.
+ */
+type Land = {
+  /** Unsimplified. */
+  raw: string;
+  /** Simplified once, rounded like every output: the edge of every shape and of the ocean. */
+  coast: string;
+  /** Positions of `coast`, to tell coastline vertices from those of borders between polities. */
+  coastKeys: Set<string>;
+  /** Segments of `coast` (see segmentKey). */
+  coastSegments: Set<string>;
+  /** Parts of `coast` up to ISLAND_MAX km², each with an index `k` and its area `A` (km²). */
+  islands: string;
+};
+
+async function loadLand(): Promise<Land> {
+  const land = await loadNaturalEarth("ne_10m_land");
+  const minor = await loadNaturalEarth("ne_10m_minor_islands");
+  const out = await mapshaper.applyCommands(
+    [
+      "-i",
+      "land.json",
+      "-dissolve",
+      "-erase",
+      "minor.json",
+      // Crumbs where the islets don't quite match the land.
+      "-filter-islands",
+      "min-area=10000",
+      // With no properties mapshaper writes a GeometryCollection, so give it one.
+      "-each",
+      "k = 0",
+      "-o",
+      "raw.json",
+      "format=geojson",
+      "-simplify",
+      `interval=${TOLERANCE.coast}`,
+      "keep-shapes",
+      "-o",
+      "coast.json",
+      "format=geojson",
+      "precision=0.0001",
+      "-explode",
+      "-each",
+      "k = this.id, A = this.area / 1e6",
+      "-filter",
+      `A <= ${ISLAND_MAX}`,
+      "-o",
+      "islands.json",
+      "format=geojson",
+      "precision=0.0001",
+    ],
+    {
+      "land.json": geometriesOnly(land.features.map((f) => f.geometry)),
+      "minor.json": geometriesOnly(minor.features.map((f) => f.geometry)),
+    },
+  );
+  const coast = outputFile(out, "coast.json");
+  const coastKeys = new Set<string>();
+  const coastSegments = new Set<string>();
+  for (const { geometry } of (JSON.parse(coast) as Collection<unknown>).features) {
+    for (const ring of ringsOf(geometry)) {
+      ring.forEach((p, i) => {
+        coastKeys.add(positionKey(p));
+        const next = ring[i + 1];
+        if (next) coastSegments.add(segmentKey(p, next));
+      });
+    }
+  }
+  return {
+    raw: outputFile(out, "raw.json"),
+    coast,
+    coastKeys,
+    coastSegments,
+    islands: outputFile(out, "islands.json"),
+  };
 }
 
 /** Interior label points for a list of geometries (pole of inaccessibility, via mapshaper). */
@@ -383,33 +507,74 @@ async function interiorPoints(geometries: Geometry[]): Promise<(number[] | undef
  * barely show: oceans (seas included) and lakes as TopoJSON, plus label points for oceans,
  * main seas and large lakes in English and Turkish.
  */
-async function buildWater(): Promise<void> {
-  const ocean = await loadNaturalEarth("ne_50m_ocean");
+async function buildWater(land: Land): Promise<void> {
   const lakes = await loadNaturalEarth("ne_50m_lakes");
+  const detailedLakes = await loadNaturalEarth("ne_10m_lakes");
   const marine = await loadNaturalEarth("ne_50m_geography_marine_polys");
-  const shapesOnly = (c: Collection<NeProps>) =>
-    JSON.stringify({
-      type: "FeatureCollection",
-      features: c.features.map((f) => ({ type: "Feature", properties: {}, geometry: f.geometry })),
-    });
 
+  // The lakes of the 1:50m set (those that matter on a world map), with their 1:10m shores.
+  const lakePoints = await interiorPoints(detailedLakes.features.map((f) => f.geometry));
+  const lakeBoxes = lakes.features.map((f) => bboxOf(f.geometry));
+  const shownLakes = detailedLakes.features.filter((_, i) => {
+    const point = lakePoints[i];
+    if (!point) return false;
+    const [x = 0, y = 0] = point;
+    return lakes.features.some((l, j) => {
+      const [x0, y0, x1, y1] = lakeBoxes[j] as BBox;
+      return x >= x0 && x <= x1 && y >= y0 && y <= y1 && pointInGeometry([x, y], l.geometry);
+    });
+  });
+  const simplifiedLakes = await mapshaper.applyCommands(
+    [
+      "-i",
+      "lakes.json",
+      "-simplify",
+      `interval=${TOLERANCE.coast}`,
+      "keep-shapes",
+      "-o",
+      "lakes.json",
+      "format=geojson",
+      "precision=0.0001",
+    ],
+    { "lakes.json": geometriesOnly(shownLakes.map((f) => f.geometry)) },
+  );
+
+  // The ocean is everything outside the coastline the shapes are cut to, so the two meet exactly.
+  const world: Geometry = {
+    type: "Polygon",
+    coordinates: [
+      [
+        [-180, -90],
+        [180, -90],
+        [180, 90],
+        [-180, 90],
+        [-180, -90],
+      ],
+    ],
+  };
   const out = await mapshaper.applyCommands(
     [
       "-i",
       "ocean.json",
       "lakes.json",
+      "coast.json",
       "combine-files",
-      "-simplify",
-      "interval=2000",
-      "keep-shapes",
+      "-erase",
+      "coast",
+      "target=ocean",
       "-o",
       "water.json",
       "format=topojson",
-      "quantization=100000",
+      "no-quantization",
+      "target=ocean,lakes",
     ],
-    { "ocean.json": shapesOnly(ocean), "lakes.json": shapesOnly(lakes) },
+    {
+      "ocean.json": geometriesOnly([world]),
+      "lakes.json": outputFile(simplifiedLakes, "lakes.json"),
+      "coast.json": land.coast,
+    },
   );
-  await writeFile(join(OUT, "water.json"), outputFile(out, "water.json"));
+  await writeFile(join(OUT, "water.json"), JSON.stringify(onGrid(outputFile(out, "water.json"))));
 
   // Oceans and main seas, then lakes large enough to be named at a world scale.
   type WaterLabel = { en: string; tr: string; k: "ocean" | "sea" | "lake"; z: number };
@@ -631,6 +796,51 @@ async function cshapesRows(clio: ClioRow[]): Promise<Row[]> {
   return rows;
 }
 
+/** `geometry` minus `cut`, or null when nothing is left. */
+async function erase(geometry: Geometry, cut: Geometry): Promise<Geometry | null> {
+  // With no properties mapshaper writes a GeometryCollection, so give it one.
+  const wrap = (g: Geometry) => JSON.stringify({ type: "Feature", properties: { i: 0 }, geometry: g });
+  const out = await mapshaper.applyCommands(
+    ["-i", "in.json", "-erase", "cut.json", "-o", "out.json", "format=geojson"],
+    { "in.json": wrap(geometry), "cut.json": wrap(cut) },
+  );
+  const result = JSON.parse(outputFile(out, "out.json")) as Collection<unknown>;
+  return result.features[0]?.geometry ?? null;
+}
+
+/** Cuts CARVED_STATES out of the CShapes countries they sit in and adds them as rows. */
+async function carveStates(rows: Row[], ne: Collection<NeProps>): Promise<Row[]> {
+  let result = rows;
+  for (const c of CARVED_STATES) {
+    const shape = ne.features.find((f) => f.properties.ADMIN === c.ne)?.geometry;
+    if (!shape) throw new Error(`Carved state not found in Natural Earth: ${c.ne}`);
+    const to = Math.min(c.to, MODERN_FROM - 1);
+    const next: Row[] = [];
+    for (const r of result) {
+      if (r.id !== c.inside || r.t < c.from || r.f > to) {
+        next.push(r);
+        continue;
+      }
+      // Split the row around the carved years; only those years lose the land.
+      if (r.f < c.from) next.push({ ...r, t: c.from - 1 });
+      const geometry = await erase(r.geometry, shape);
+      if (geometry) next.push({ ...r, f: Math.max(r.f, c.from), t: Math.min(r.t, to), geometry });
+      if (r.t > to) next.push({ ...r, f: to + 1 });
+    }
+    next.push({
+      id: c.wikidata,
+      f: c.from,
+      t: to,
+      en: c.en,
+      tr: c.tr,
+      wikidata: c.wikidata,
+      geometry: shape,
+    });
+    result = next;
+  }
+  return result;
+}
+
 function modernRows(ne: Collection<NeProps>): Row[] {
   // Dependencies (Greenland, French Guiana…) are coloured with their sovereign.
   const sovereignId = new Map<string, string>();
@@ -642,7 +852,7 @@ function modernRows(ne: Collection<NeProps>): Row[] {
     const p = f.properties;
     const id = String(p.WIKIDATAID || p.NAME_EN);
     const sovereign = sovereignId.get(String(p.SOVEREIGNT));
-    const base: Row = {
+    return {
       id,
       g: sovereign && sovereign !== id ? sovereign : undefined,
       f: MODERN_FROM,
@@ -652,16 +862,22 @@ function modernRows(ne: Collection<NeProps>): Row[] {
       wikidata: p.WIKIDATAID ? String(p.WIKIDATAID) : undefined,
       geometry: f.geometry,
     };
-    // Split the row where a country changed its name after Natural Earth's release.
-    const renames = MODERN_RENAMES.filter((r) => r.wikidata === id);
+  });
+}
+
+/** Splits rows where RENAMES give a country another name, and applies those names. */
+function applyRenames(rows: Row[]): Row[] {
+  return rows.flatMap((row) => {
+    const renames = RENAMES.filter((r) => r.wikidata === row.id && r.from <= row.t && r.to >= row.f);
+    if (renames.length === 0) return [row];
     const cuts = [...new Set(renames.flatMap((r) => [r.from, r.to + 1]))]
-      .filter((y) => y > MODERN_FROM && y <= END_YEAR)
+      .filter((y) => y > row.f && y <= row.t)
       .sort((a, b) => a - b);
-    const bounds = [MODERN_FROM, ...cuts, END_YEAR + 1];
+    const bounds = [row.f, ...cuts, row.t + 1];
     return bounds.slice(0, -1).map((from, i) => {
-      const to = (bounds[i + 1] ?? END_YEAR + 1) - 1;
+      const to = (bounds[i + 1] ?? row.t + 1) - 1;
       const rename = renames.find((r) => r.from <= from && to <= r.to);
-      return { ...base, f: from, t: to, en: rename?.en ?? base.en, tr: rename?.tr ?? base.tr };
+      return { ...row, f: from, t: to, en: rename?.en ?? row.en, tr: rename?.tr ?? row.tr };
     });
   });
 }
@@ -727,54 +943,388 @@ function reportWikidataMismatches(rows: Row[], info: Map<string, WikidataInfo>) 
 // ---------------------------------------------------------------------------
 // Geometry processing and output
 
+/**
+ * A row's final shape. Rows split from one source shape share the same `geometry` object.
+ * `vertices` counts only vertices off the coastline (see WINDOW_BUDGET).
+ */
 type Shaped = { row: Row; geometry: Geometry; label: number[]; area: number; vertices: number };
 
-/** Simplifies shapes (optionally clipped to land) and finds a label point inside each. */
-async function shape(rows: Row[], tolerance: number, clip?: string): Promise<Shaped[]> {
-  const input = {
+type ShapeOptions = {
+  /** Give islands to the one polity holding part of them (see ISLAND_MAX). */
+  islands?: boolean;
+  /** The shapes sit on top of other countries (disputed areas): grow over the sea only. */
+  overlay?: boolean;
+  /**
+   * Keep shapes with no land on the coastline (reefs such as Scarborough Shoal) as the source
+   * draws them. Off by default: in historical sources such shapes are stray fragments.
+   */
+  offshore?: boolean;
+};
+
+/** Whether a point lies on segment a–b, give or take the rounding of output coordinates. */
+function onSegment([px = 0, py = 0]: number[], [ax = 0, ay = 0]: number[], [bx = 0, by = 0]: number[]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const length2 = dx * dx + dy * dy;
+  const t = length2 > 0 ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / length2)) : 0;
+  const ex = ax + t * dx - px;
+  const ey = ay + t * dy - py;
+  return ex * ex + ey * ey <= COAST_SNAP * COAST_SNAP;
+}
+
+/**
+ * Removes the vertices a ring got where other outlines crossed the coastline: points lying on
+ * a coastline segment, between its two ends. They change nothing in the shape, but differ from
+ * one shape to the next, so the same coast could not be stored once for all of them.
+ */
+function dropCoastCrossings(ring: number[][], land: Land): number[][] {
+  const n = ring.length - 1;
+  const at = (i: number) => ring[i % n] as number[];
+  const onCoast = (i: number) => land.coastKeys.has(positionKey(at(i)));
+  let start = 0;
+  while (start < n && !onCoast(start)) start++;
+  if (start === n) return ring;
+  const kept: number[][] = [at(start)];
+  for (let i = start; i < start + n; ) {
+    let j = i + 1;
+    while (j < start + n && !onCoast(j)) j++;
+    const run: number[][] = [];
+    for (let k = i + 1; k < j; k++) run.push(at(k));
+    const crossings =
+      run.length > 0 &&
+      land.coastSegments.has(segmentKey(at(i), at(j))) &&
+      run.every((p) => onSegment(p, at(i), at(j)));
+    if (!crossings) kept.push(...run);
+    kept.push(at(j));
+    i = j;
+  }
+  return kept.length >= 4 ? kept : ring;
+}
+
+function withoutCoastCrossings(geometry: Geometry, land: Land): Geometry {
+  const clean = (polygon: number[][][]) => polygon.map((ring) => dropCoastCrossings(ring, land));
+  return geometry.type === "Polygon"
+    ? { type: "Polygon", coordinates: clean(geometry.coordinates as number[][][]) }
+    : { type: "MultiPolygon", coordinates: (geometry.coordinates as number[][][][]).map(clean) };
+}
+
+/** Vertices of a shape that are not on the coastline (see WINDOW_BUDGET). */
+function borderVertices(geometry: Geometry, land: Land): number {
+  let count = 0;
+  for (const ring of ringsOf(geometry)) {
+    for (const p of ring.slice(1)) if (!land.coastKeys.has(positionKey(p))) count++;
+  }
+  return count;
+}
+
+/**
+ * Fits shapes to the coastline and finds a label point inside each:
+ * 1. simplifies them, keeping shared borders identical;
+ * 2. cuts a flat mosaic of all shapes, all years at once, and grows each piece by GROW over
+ *    unclaimed land and the sea. The pieces split that space by distance, so polities of the
+ *    same year never overlap, and what a piece gains goes to every shape holding it: a
+ *    polity's coast reaches past the real one wherever its source stops short of it;
+ * 3. cuts shapes and growth at the coastline, so coasts are those of the ocean layer;
+ * 4. optionally gives whole islands to the one polity holding part of them;
+ * 5. joins each shape with its growth. Shapes that overlap are joined in separate batches:
+ *    given hundreds of overlapping shapes at once, mapshaper's dissolve draws some rings wrong.
+ */
+async function shape(rows: Row[], tolerance: number, land: Land, options: ShapeOptions = {}) {
+  // Rows split from one source shape (renamed periods) share it: each is processed once.
+  const sources: Geometry[] = [];
+  const sourceOf = new Map<Geometry, number>();
+  const spans: [number, number][][] = [];
+  for (const r of rows) {
+    let d = sourceOf.get(r.geometry);
+    if (d === undefined) {
+      d = sources.push(r.geometry) - 1;
+      sourceOf.set(r.geometry, d);
+      spans.push([]);
+    }
+    spans[d]?.push([r.f, r.t]);
+  }
+  type Piece = { d: number; geometry: unknown };
+  // Passed to mapshaper as an object: as a string it can outgrow what V8 allows.
+  const collection = (pieces: Piece[]) => ({
     type: "FeatureCollection",
-    features: rows.map((r, i) => ({ type: "Feature", properties: { i }, geometry: r.geometry })),
-  };
+    features: pieces.map(({ d, geometry }) => ({ type: "Feature", properties: { d }, geometry })),
+  });
+  const features = <P>(file: string) =>
+    (JSON.parse(file) as { features?: { properties: P; geometry: unknown }[] }).features ?? [];
+
+  const input: Piece[] = sources.map((geometry, d) => ({ d, geometry }));
+  if (options.overlay) {
+    // All other land joins in as a shape of its own (-1) that only stops the others growing.
+    const rest = await mapshaper.applyCommands(
+      ["-i", "land.json", "-erase", "shapes.json", "-o", "rest.json", "format=geojson"],
+      { "land.json": land.raw, "shapes.json": geometriesOnly(sources) },
+    );
+    for (const f of features(outputFile(rest, "rest.json"))) input.push({ d: -1, geometry: f.geometry });
+  }
+
+  const islandSteps = [
+    // What each piece holds of each island.
+    "-clip",
+    "islands.json",
+    "target=cells",
+    "+",
+    "name=held",
+    "-explode",
+    "target=held",
+    "-each",
+    "A = this.area / 1e6",
+    "target=held",
+    "-points",
+    "inner",
+    "target=held",
+    "+",
+    "name=points",
+    // mapshaper reads each input once, so the islands come in twice.
+    "-join",
+    "island-index.json",
+    "target=points",
+    "fields=k",
+    "-o",
+    "held.json",
+    "format=geojson",
+    "target=points",
+  ];
   const out = await mapshaper.applyCommands(
     [
       "-i",
       "in.json",
-      ...(clip ? ["-clip", "land.json", "remove-slivers"] : []),
       "-simplify",
       `interval=${tolerance}`,
       "keep-shapes",
-      "-filter",
-      "!this.isNull",
+      // A flat mosaic of all shapes, all years at once.
+      "-mosaic",
+      "+",
+      "name=pieces",
       "-each",
-      "area = Math.round(this.area / 1e6)",
-      "-o",
-      "shapes.json",
-      "format=geojson",
-      "precision=0.0001",
+      "pid = this.id",
+      "target=pieces",
+      // Which shapes hold each piece, from a point inside it: the mosaic's own record of
+      // that is wrong for some pieces where hundreds of shapes overlap.
       "-points",
       "inner",
+      "target=pieces",
+      "+",
+      "name=centres",
+      "-join",
+      "in",
+      "target=centres",
+      "calc=ds = collect(d)",
+      "fields=pid",
       "-o",
-      "points.json",
+      "centres.json",
       "format=geojson",
       "precision=0.01",
+      "target=centres",
+      // Each piece grows into the free space it is closest to.
+      "-buffer",
+      `radius=${GROW}`,
+      "topological",
+      "target=pieces",
+      "+",
+      "name=grown",
+      "-erase",
+      "pieces",
+      "target=grown",
+      "+",
+      "name=growth",
+      // The shapes (field d) and the growth of each piece (field pid), cut at the coastline.
+      // No remove-slivers: growth along a coast is a thin strip, and so are barrier islands.
+      "-merge-layers",
+      "target=in,growth",
+      "force",
+      "name=cells",
+      "-clip",
+      "coast.json",
+      "target=cells",
+      // Rounded to 10 cm: edges shared between cells still match.
+      "-o",
+      "cells.json",
+      "format=geojson",
+      "precision=0.000001",
+      "target=cells",
+      ...(options.islands ? islandSteps : []),
     ],
-    clip ? { "in.json": JSON.stringify(input), "land.json": clip } : { "in.json": JSON.stringify(input) },
+    {
+      "in.json": collection(input),
+      "coast.json": land.coast,
+      ...(options.islands ? { "islands.json": land.islands, "island-index.json": land.islands } : {}),
+    },
   );
-  const shapes = JSON.parse(outputFile(out, "shapes.json")) as Collection<{ i: number; area: number }>;
-  const points = JSON.parse(outputFile(out, "points.json")) as {
-    features: { properties: { i: number }; geometry: { coordinates: number[] } | null }[];
+
+  // The shapes holding each mosaic piece. Those that share a piece overlap.
+  const holdersOf = new Map<number, number[]>();
+  const sharing = new Map<string, number[]>();
+  for (const { properties: p } of features<{ pid: number; ds?: number[] | null }>(
+    outputFile(out, "centres.json"),
+  )) {
+    // -1: land that only stops the others growing.
+    const ds = (p.ds ?? []).filter((d) => d >= 0);
+    holdersOf.set(p.pid, ds);
+    if (ds.length > 1) sharing.set(ds.join(","), ds);
+  }
+  /** A cell is a shape (d) or what a piece grew (pid), which goes to every holder of the piece. */
+  type Cell = { d?: number | null; pid?: number | null };
+  const ownersOf = (cell: Cell) =>
+    cell.d !== undefined && cell.d !== null
+      ? cell.d >= 0
+        ? [cell.d]
+        : []
+      : (holdersOf.get(cell.pid ?? -1) ?? []);
+
+  // Each shape's pieces.
+  const piecesOf = new Map<number, unknown[]>();
+  const addPiece = (d: number, geometry: unknown) => {
+    const list = piecesOf.get(d);
+    if (list) list.push(geometry);
+    else piecesOf.set(d, [geometry]);
   };
-  const labelOf = new Map(points.features.map((p) => [p.properties.i, p.geometry?.coordinates]));
-  return shapes.features.flatMap((f) => {
-    const row = rows[f.properties.i];
-    const label = labelOf.get(f.properties.i);
-    if (!row || !label) return [];
-    const vertices = countVertices(f.geometry.coordinates);
-    return [{ row, geometry: f.geometry, label, area: f.properties.area, vertices }];
+  for (const cell of features<Cell>(outputFile(out, "cells.json"))) {
+    if (cell.geometry) for (const d of ownersOf(cell.properties)) addPiece(d, cell.geometry);
+  }
+
+  if (options.islands) {
+    const islands = new Map(features<{ k: number; A: number }>(land.islands).map((f) => [f.properties.k, f]));
+    /** Island -> shape -> km² held. */
+    const held = new Map<number, Map<number, number>>();
+    /** Island -> every shape touching it. */
+    const touching = new Map<number, Set<number>>();
+    for (const { properties: p } of features<Cell & { A: number; k?: number | null }>(
+      outputFile(out, "held.json"),
+    )) {
+      if (p.k === undefined || p.k === null) continue;
+      const ds = ownersOf(p);
+      const all = touching.get(p.k) ?? new Set<number>();
+      for (const d of ds) all.add(d);
+      touching.set(p.k, all);
+      // Crumbs left where neighbours' growth meets say nothing about who holds the island.
+      if (p.A < 0.01) continue;
+      const byShape = held.get(p.k) ?? new Map<number, number>();
+      for (const d of ds) byShape.set(d, (byShape.get(d) ?? 0) + p.A);
+      held.set(p.k, byShape);
+    }
+    const coexist = (a: number, b: number) =>
+      (spans[a] ?? []).some(([fa, ta]) => (spans[b] ?? []).some(([fb, tb]) => fa <= tb && fb <= ta));
+    for (const [k, byShape] of held) {
+      const island = islands.get(k);
+      if (!island) continue;
+      let granted = false;
+      for (const [d, area] of byShape) {
+        if (area < ISLAND_SHARE * island.properties.A || area > 0.999 * island.properties.A) continue;
+        if ([...byShape.keys()].some((other) => other !== d && coexist(d, other))) continue;
+        addPiece(d, island.geometry);
+        granted = true;
+      }
+      // The whole island now overlaps every shape holding part of it.
+      if (granted) sharing.set(`island ${k}`, [...(touching.get(k) ?? [])]);
+    }
+  }
+
+  // Batches of shapes that share no piece: greedy colouring, most entangled shapes first. Each
+  // group of shapes sharing a piece keeps a bitset of the batches its members are in.
+  const groups = [...sharing.values()];
+  const groupsOf = new Map<number, number[]>();
+  groups.forEach((ds, g) => {
+    for (const d of ds) {
+      const list = groupsOf.get(d);
+      if (list) list.push(g);
+      else groupsOf.set(d, [g]);
+    }
   });
+  const usedBy = groups.map((): number[] => []);
+  const entangled = (d: number) =>
+    (groupsOf.get(d) ?? []).reduce((sum, g) => sum + (groups[g]?.length ?? 0), 0);
+  const batches: number[][] = [];
+  for (const d of [...piecesOf.keys()].sort((a, b) => entangled(b) - entangled(a) || a - b)) {
+    const taken: number[] = [];
+    for (const g of groupsOf.get(d) ?? []) {
+      for (const [i, word] of (usedBy[g] ?? []).entries()) taken[i] = (taken[i] ?? 0) | word;
+    }
+    let b = 0;
+    while ((taken[b >> 5] ?? 0) & (1 << (b & 31))) b++;
+    for (const g of groupsOf.get(d) ?? []) {
+      const words = usedBy[g] ?? [];
+      words[b >> 5] = (words[b >> 5] ?? 0) | (1 << (b & 31));
+    }
+    const batch = batches[b];
+    if (batch) batch.push(d);
+    else batches[b] = [d];
+  }
+
+  const shapeOf = new Map<number, Omit<Shaped, "row">>();
+  /** Runs `steps` on pieces (field d), then keeps each shape with an area and a label point. */
+  const finish = async (pieces: Piece[], steps: string[]) => {
+    const out = await mapshaper.applyCommands(
+      [
+        "-i",
+        "pieces.json",
+        ...steps,
+        "-filter",
+        "!this.isNull",
+        "-each",
+        "area = Math.round(this.area / 1e6)",
+        "-o",
+        "shapes.json",
+        "format=geojson",
+        "precision=0.0001",
+        "-points",
+        "inner",
+        "-o",
+        "points.json",
+        "format=geojson",
+        "precision=0.01",
+      ],
+      { "pieces.json": collection(pieces) },
+    );
+    const labelOf = new Map(
+      features<{ d: number }>(outputFile(out, "points.json")).map((p) => [
+        p.properties.d,
+        (p.geometry as { coordinates: number[] } | null)?.coordinates,
+      ]),
+    );
+    for (const f of features<{ d: number; area: number }>(outputFile(out, "shapes.json"))) {
+      const label = labelOf.get(f.properties.d);
+      if (!label) continue;
+      const geometry = withoutCoastCrossings(f.geometry as Geometry, land);
+      shapeOf.set(f.properties.d, {
+        geometry,
+        label,
+        area: f.properties.area,
+        vertices: borderVertices(geometry, land),
+      });
+    }
+  };
+  for (const batch of batches) {
+    await finish(
+      batch.flatMap((d) => (piecesOf.get(d) ?? []).map((geometry) => ({ d, geometry }))),
+      // Only pieces of the same shape overlap here. Without snapping, edges shared with
+      // shapes of other batches stay identical.
+      ["-dissolve", "d", "no-snap"],
+    );
+  }
+  if (options.offshore) {
+    // Reefs and islets the coastline lacks: kept as the source draws them.
+    const offshore = sources.flatMap((geometry, d) => (shapeOf.has(d) ? [] : [{ d, geometry }]));
+    if (offshore.length > 0) await finish(offshore, ["-simplify", `interval=${tolerance}`, "keep-shapes"]);
+  }
+
+  const result = rows.flatMap((row): Shaped[] => {
+    const s = shapeOf.get(sourceOf.get(row.geometry) ?? -1);
+    return s ? [{ row, ...s }] : [];
+  });
+  // Rows now point at their final shape, so the (much larger) source shapes can be freed.
+  for (const s of result) s.row.geometry = s.geometry;
+  return result;
 }
 
-/** Greedily groups years into windows whose shapes stay under the vertex budget. */
+/**
+ * Greedily groups years into windows whose shapes stay under the vertex budget. A window never
+ * spans two eras: their sources share no border, so it would carry two sets of everything.
+ */
 function windows(shaped: Shaped[]): { from: number; to: number }[] {
   // Shapes that begin in each year are the only ones that can join a growing window.
   const byStart = new Map<number, Shaped[]>();
@@ -783,14 +1333,27 @@ function windows(shaped: Shaped[]): { from: number; to: number }[] {
   const result: { from: number; to: number }[] = [];
   let from = START_YEAR;
   while (from <= END_YEAR) {
-    let cost = shaped
-      .filter((s) => s.row.f <= from && s.row.t >= from)
-      .reduce((sum, s) => sum + s.vertices, 0);
+    // Rows that share a shape cost it once.
+    const counted = new Set<Geometry>();
+    const costOf = (list: Shaped[]) => {
+      const fresh = new Set<Geometry>();
+      let sum = 0;
+      for (const s of list) {
+        if (counted.has(s.geometry) || fresh.has(s.geometry)) continue;
+        fresh.add(s.geometry);
+        sum += s.vertices;
+      }
+      return { fresh, sum };
+    };
+    const first = costOf(shaped.filter((s) => s.row.f <= from && s.row.t >= from));
+    for (const g of first.fresh) counted.add(g);
+    let cost = first.sum;
     let to = from;
-    while (to < END_YEAR) {
-      const extra = (byStart.get(to + 1) ?? []).reduce((sum, s) => sum + s.vertices, 0);
-      if (extra > 0 && cost + extra > WINDOW_BUDGET) break;
-      cost += extra;
+    while (to < END_YEAR && to + 1 !== CSHAPES_FROM && to + 1 !== MODERN_FROM) {
+      const extra = costOf(byStart.get(to + 1) ?? []);
+      if (extra.sum > 0 && cost + extra.sum > WINDOW_BUDGET) break;
+      for (const g of extra.fresh) counted.add(g);
+      cost += extra.sum;
       to++;
     }
     result.push({ from, to });
@@ -890,8 +1453,14 @@ function assignColors(weights: Map<string, number>, keys: string[]): Map<string,
   return colors;
 }
 
+/** Rounds a TopoJSON file written without quantization to the shared GRID. */
+function onGrid(topojson: string): Topology {
+  // JSON.parse gives `any`, so quantize infers its loosest Topology type.
+  return quantize(JSON.parse(topojson), GRID) as Topology;
+}
+
 /** Encodes border shapes as TopoJSON, so borders shared between neighbours and years are stored once. */
-async function toTopoJson(shaped: Shaped[]): Promise<string> {
+async function toTopoJson(shaped: Shaped[]): Promise<Topology> {
   const input = {
     type: "FeatureCollection",
     features: shaped.map((s) => ({
@@ -901,24 +1470,34 @@ async function toTopoJson(shaped: Shaped[]): Promise<string> {
     })),
   };
   const out = await mapshaper.applyCommands(
-    ["-i", "borders.json", "-o", "out.json", "format=topojson", "quantization=200000"],
-    { "borders.json": JSON.stringify(input) },
+    ["-i", "borders.json", "-o", "out.json", "format=topojson", "no-quantization"],
+    { "borders.json": input },
   );
-  return outputFile(out, "out.json");
+  return onGrid(outputFile(out, "out.json"));
+}
+
+/**
+ * Rows for 0–2013. Cliopatria is only read here, so the shapes of its polities that end up
+ * unused (after 1885, or replaced by name fixes) can be freed before the heavy geometry work.
+ */
+async function historicalRows(ne: Collection<NeProps>) {
+  const clio = await loadCliopatria();
+  return {
+    ancient: ancientRows(clio),
+    cshapes: applyRenames(await carveStates(await cshapesRows(clio), ne)),
+  };
 }
 
 async function main() {
   await mkdir(CACHE, { recursive: true });
 
   console.log("Sources");
-  const clio = await loadCliopatria();
   const ne = await loadNaturalEarth("ne_10m_admin_0_countries");
   const disputedNe = await loadNaturalEarth("ne_10m_admin_0_disputed_areas");
 
   console.log("Eras");
-  const ancient = ancientRows(clio);
-  const cshapes = await cshapesRows(clio);
-  const modern = modernRows(ne);
+  const { ancient, cshapes } = await historicalRows(ne);
+  const modern = applyRenames(modernRows(ne));
   await bridgeIdentities([...ancient, ...cshapes], modern);
   console.log(
     `  ${ancient.length} Cliopatria rows, ${cshapes.length} CShapes rows, ${modern.length} countries`,
@@ -955,16 +1534,16 @@ async function main() {
     };
   });
 
-  console.log("Simplifying (a minute or two)");
-  // Historical shapes are clipped to the same coastline as the water layer, so no border
-  // spills into the sea; Natural Earth's own countries already follow it.
-  const land = landGeoJson();
+  console.log("Fitting shapes to the coastline (a few minutes)");
+  // Every era is cut to the coastline the ocean layer is made from, so no fill spills into
+  // the sea or stops short of the coast, and coasts meet the water exactly.
+  const land = await loadLand();
   const shaped = [
-    ...(await shape(ancient, TOLERANCE.ancient, land)),
-    ...(await shape(cshapes, TOLERANCE.cshapes, land)),
-    ...(await shape(modern, TOLERANCE.modern)),
+    ...(await shape(ancient, TOLERANCE.ancient, land, { islands: true })),
+    ...(await shape(cshapes, TOLERANCE.cshapes, land, { islands: true })),
+    ...(await shape(modern, TOLERANCE.modern, land, { offshore: true })),
   ];
-  const disputeShapes = await shape(disputes, TOLERANCE.disputes);
+  const disputeShapes = await shape(disputes, TOLERANCE.disputes, land, { overlay: true });
 
   console.log("Wikidata");
   const allRows = shaped.map((s) => s.row);
@@ -1004,7 +1583,7 @@ async function main() {
   await mkdir(join(OUT, "labels"), { recursive: true });
   // The generated data carries its own license (CC BY-NC-SA, because of CShapes).
   await copyFile(join(ROOT, "scripts", "DATA_LICENSE.md"), join(OUT, "LICENSE.md"));
-  await buildWater();
+  await buildWater(land);
 
   const spans = windows(shaped);
   const topologies: Topology[] = [];
@@ -1012,7 +1591,7 @@ async function main() {
   for (const { from, to } of spans) {
     // Larger shapes first, so smaller ones (enclaves, breakaway regions) draw on top.
     const inWindow = shaped.filter((s) => s.row.f <= to && s.row.t >= from).sort((a, b) => b.area - a.area);
-    const topology = JSON.parse(await toTopoJson(inWindow)) as Topology;
+    const topology = await toTopoJson(inWindow);
     addNeighbours(topology, neighbours);
     topologies.push(topology);
   }
@@ -1086,10 +1665,18 @@ async function main() {
     tr: string[];
     spans: [number, number][];
     wiki: { en?: string; tr?: string };
+    note?: { en: string; tr: string };
   };
   const entries = new Map<string, Entry>();
   for (const r of [...allRows].sort((a, b) => a.f - b.f)) {
-    const e = entries.get(r.id) ?? { id: r.id, en: [], tr: [], spans: [], wiki: {} };
+    const e = entries.get(r.id) ?? {
+      id: r.id,
+      en: [],
+      tr: [],
+      spans: [],
+      wiki: {},
+      note: POLITY_NOTES[r.id],
+    };
     if (!e.en.includes(r.en)) e.en.push(r.en);
     const tr = r.tr ?? r.en;
     if (!e.tr.includes(tr)) e.tr.push(tr);

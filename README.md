@@ -73,11 +73,12 @@ Borders are still simplified for a world-scale map, and historical boundaries we
 
 **Data pipeline** ([`scripts/build-data.ts`](scripts/build-data.ts)). It downloads every source at a pinned version and merges the three eras into one list of shapes, each valid from one year to another. [mapshaper](https://github.com/mbloch/mapshaper) then:
 
-1. clips historical shapes to the coastline,
-2. simplifies them while keeping shared borders identical,
-3. finds a label point inside each shape.
+1. simplifies shapes while keeping shared borders identical,
+2. grows them over unclaimed coast and sea, so no source's rougher coastline leaves a gap, and gives an island to the one polity holding part of it,
+3. cuts every era at one Natural Earth 1:10m coastline, which is also the edge of the ocean layer, so fills, borders and water meet exactly,
+4. finds a label point inside each shape.
 
-Names and Turkish translations come from Wikidata, oceans, seas and lakes from Natural Earth. The years are split into 19 windows of similar size, each stored as TopoJSON so borders shared between neighbours and between years are stored once. The full 2,000 years come to 23 MB.
+Names and Turkish translations come from Wikidata, oceans, seas and lakes from Natural Earth. The years are split into 17 windows of similar size, each stored as TopoJSON so borders shared between neighbours and between years are stored once. The full 2,000 years come to 32 MB.
 
 **Colours.** The build reads which polities share an edge in the topology, weighted by how many years they coexist. It then colours this graph greedily: the most connected polities pick first, and each takes the colour its coloured neighbours use least.
 
@@ -100,13 +101,13 @@ npm install
 npm run dev
 ```
 
-| Script          | What it does                                                                                 |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| `npm run dev`   | Start the dev server                                                                         |
-| `npm run build` | Type-check and build the static site into `dist/`                                            |
-| `npm test`      | Run the unit tests                                                                           |
-| `npm run check` | Lint and format check (Biome)                                                                |
-| `npm run data`  | Rebuild `public/data` from the sources (about a minute; add `-- report` for the data checks) |
+| Script          | What it does                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| `npm run dev`   | Start the dev server                                                                            |
+| `npm run build` | Type-check and build the static site into `dist/`                                               |
+| `npm test`      | Run the unit tests                                                                              |
+| `npm run check` | Lint and format check (Biome)                                                                   |
+| `npm run data`  | Rebuild `public/data` from the sources (about ten minutes; add `-- report` for the data checks) |
 
 ## Roadmap
 
